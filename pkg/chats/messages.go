@@ -1,0 +1,121 @@
+package chats
+
+import (
+	"database/sql"
+	"errors"
+	"time"
+
+	"github.com/Elena-S/Chat/pkg/database"
+	"github.com/Elena-S/Chat/pkg/users"
+)
+
+type Message struct {
+	ChatID   uint
+	ID       uint
+	Author   string
+	AuthorID uint
+	Text     string
+	Date     time.Time
+	Service  bool
+}
+
+func (message *Message) Register(sender users.User) (err error) {
+	if message.ID != 0 {
+		err = errors.New("non zero message identifier")
+		return
+	}
+	if message.ChatID == 0 {
+		err = errors.New("zero chat identifier")
+		return
+	}
+	if message.Text == "" {
+		err = errors.New("empty message")
+		return
+	}
+
+	message.AuthorID = (&sender).ID()
+	message.Author = (&sender).FullName()
+	message.Date = time.Now()
+
+	if message.Service {
+		return
+	}
+
+	tx, err := database.DB().Begin()
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+
+	err = message.create(tx)
+	if err != nil {
+		return
+	}
+
+	err = tx.Commit()
+	return
+}
+
+func (message *Message) Chat() (chat *Chat) {
+	chat = new(Chat)
+	chat.ID = message.ChatID
+	return
+}
+
+func (message *Message) create(tx *sql.Tx) (err error) {
+	row := tx.QueryRow(`
+	INSERT INTO chat_messages (chat_id, author_id, date, text) 
+	VALUES ($1, $2, $3, $4)
+	RETURNING id`, message.ChatID, message.AuthorID, message.Date, message.Text)
+	return row.Scan(&message.ID)
+}
+
+type History struct {
+	LastID   uint
+	Messages []Message
+}
+
+func (history *History) Fill(user users.User, chatID uint, messageID uint) (err error) {
+	if chatID == 0 {
+		err = errors.New("zero chat id")
+		return
+	}
+
+	rows, err := database.DB().Query(`
+	SELECT
+		chat_messages.id,
+		users.full_name author,
+		chat_messages.author_id author_id,
+		chat_messages.text text,
+		chat_messages.date
+	FROM
+		chats
+		JOIN chat_contacts
+		ON chats.id = $1
+			AND chats.id = chat_contacts.chat_id
+			AND chat_contacts.user_id = $2
+		JOIN chat_messages
+		ON chats.id = chat_messages.chat_id
+			AND (chat_messages.id < $3 OR $3 = 0)
+		JOIN users
+		ON chat_messages.author_id = users.id
+	ORDER BY
+		chat_messages.id DESC
+	LIMIT 100`, chatID, (&user).ID(), messageID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		message := Message{ChatID: chatID}
+		err = rows.Scan(&message.ID, &message.Author, &message.AuthorID, &message.Text, &message.Date)
+		if err != nil {
+			return
+		}
+		history.Messages = append(history.Messages, message)
+		history.LastID = message.ID
+	}
+
+	return
+}

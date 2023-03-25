@@ -1,0 +1,43 @@
+html {
+    box-sizing: border-box;
+    height: 100%;
+    color: white;
+}
+
+body {
+    box-sizing: border-box;
+    height: 100%;
+    font-family: Arial, sans-serif;
+    font-size: 11pt;
+    background-color: #001a33;
+}
+
+button {
+    box-sizing: border-box;
+    border: none;
+    background-color: white;
+    color: #001a33;
+    font-size: 14pt;
+}
+
+h1 {
+    font-size: 36pt;
+}
+
+h2 {
+    font-size: 20pt;
+}
+
+.invisible {
+    display: none;
+}
+
+.main-column {
+    margin: 0 auto;
+    height: 100%;
+    width: 60%;
+}
+
+.app-name * {
+    display: inline-block;
+}
