@@ -14,7 +14,6 @@ import (
 
 	"github.com/Elena-S/Chat/pkg/conns"
 	"github.com/Elena-S/Chat/pkg/database"
-	"github.com/Elena-S/Chat/pkg/users"
 	"golang.org/x/exp/slices"
 	"golang.org/x/net/websocket"
 )
@@ -41,23 +40,22 @@ type Chat struct {
 	LastMessageDate time.Time
 }
 
-func (chat *Chat) Register(r io.Reader, owner users.User) (err error) {
+func (chat *Chat) Register(r io.Reader, ownerID uint) (err error) {
 	err = json.NewDecoder(r).Decode(chat)
 	if err != nil {
 		return
 	}
 
-	ownerID := (&owner).ID()
 	if slices.Index(chat.Contacts, ownerID) < 0 {
 		chat.Contacts = append(chat.Contacts, ownerID)
 	}
 
 	if chat.ID != 0 {
-		err = errors.New("non zero chat identifier")
+		err = errors.New("chats: got non zero chat identifier")
 		return
 	}
 	if len(chat.Contacts) < minContactsCount {
-		err = errors.New("not enought contacts to create chat")
+		err = errors.New("chats: not enought contacts to create chat")
 		return
 	}
 
@@ -76,7 +74,7 @@ func (chat *Chat) SendMessage(message Message) (err error) {
 		return
 	}
 	if len(chat.Contacts) < minContactsCount {
-		err = fmt.Errorf("the number of receivers should be at least %d", minContactsCount)
+		err = fmt.Errorf("chats: the number of receivers should be at least %d", minContactsCount)
 		log.Println("chats: ", err)
 		return
 	}
@@ -114,7 +112,7 @@ func (chat *Chat) createNX() (err error) {
 	if err != nil {
 		return
 	} else if ok {
-		return errors.New("same chat already exists")
+		return errors.New("chats: the same chat already exists")
 	}
 
 	err = chat.create(tx)
@@ -134,7 +132,7 @@ func (chat *Chat) exists(tx *sql.Tx) (exists bool, err error) {
 		return
 	}
 	if len(chat.Contacts) > minContactsCount {
-		err = errors.New("contacts count doesn't match for privat chat")
+		err = errors.New("chats: contacts count doesn't match for private chat")
 		return
 	}
 	rows, err := tx.Query(`
@@ -199,14 +197,14 @@ func (chat *Chat) refreshContacts() (err error) {
 		chat_id = $1`, chat.ID).Scan(database.Array(&chat.Contacts))
 }
 
-func Search(user users.User, phrase string) (chatArr []Chat, err error) {
+func Search(userID uint, phrase string) (chatArr []Chat, err error) {
 	phrase = strings.ToLower(strings.TrimSpace(phrase))
 	if phrase == "" {
 		return
 	}
 
 	q := QueryChat{}
-	q.CommonText = `
+	q.Text = `
 	SELECT
 		COALESCE(chats.chat_id, 0) id,
 		$3 type,
@@ -246,14 +244,14 @@ func Search(user users.User, phrase string) (chatArr []Chat, err error) {
 	WHERE 
 		search_name LIKE $1 AND type_id <> $3
 	LIMIT 25`
-	q.Params = []any{fmt.Sprint("%", phrase, "%"), (&user).ID(), ChatTypePrivate}
+	q.Params = []any{fmt.Sprint("%", phrase, "%"), userID, ChatTypePrivate}
 
 	return q.result()
 }
 
-func List(user users.User) (chatArr []Chat, err error) {
+func List(userID uint) (chatArr []Chat, err error) {
 	q := QueryChat{}
-	q.CommonText = `
+	q.Text = `
 	SELECT
 		chats.id id,
 		chats.type_id type,
@@ -272,7 +270,44 @@ func List(user users.User) (chatArr []Chat, err error) {
 			AND chat_contacts.user_id <> chat_contact.user_id
 		LEFT JOIN users
 		ON chat_contact.user_id = users.id`
-	q.Params = []any{(&user).ID(), ChatTypePrivate}
+	q.Params = []any{userID, ChatTypePrivate}
 
 	return q.result()
+}
+
+func GetChatInfoByID(ID uint, userID uint) (chat Chat, err error) {
+	q := QueryChat{}
+	q.Text = `
+	SELECT 
+	chats.id id,
+	chats.type_id type,
+	chats.name name,
+	COALESCE(users.full_name, chats.name) presentation,
+	COALESCE(users.phone, '') phone,
+	COALESCE(users.id, 0) user_id
+FROM 
+	chats AS chats
+		JOIN chat_contacts AS chat_contacts
+		ON chats.id = $1
+		AND chats.id = chat_contacts.chat_id
+		AND chat_contacts.user_id = $2
+		LEFT JOIN chat_contacts AS chat_contact
+		ON chats.id = chat_contact.chat_id
+		AND chat_contact.user_id != $2
+		AND chats.type_id = $3
+		LEFT JOIN users AS users
+		ON chat_contact.user_id = users.id`
+	q.Params = []any{ID, userID, ChatTypePrivate}
+
+	chats, err := q.result()
+	if err != nil {
+		return
+	}
+
+	if len(chats) == 0 {
+		err = fmt.Errorf("chats: chat with ID %d and user ID %d is not exists", ID, userID)
+		return
+	}
+
+	return chats[0], nil
 }

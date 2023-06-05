@@ -1,0 +1,139 @@
+.dialog-common {
+    border: solid 1px #9400ff;
+    overflow: hidden;
+}
+
+.dialog-main {
+    height: 80%;
+    width: 100%;
+    display: flex;
+}
+
+.dialog-chatlist {
+    box-sizing: border-box;
+    height: 100%;
+    width: 30%;
+}
+
+.dialog-chat {
+    box-sizing: border-box;
+    height: 100%;
+    width: 70%;
+}
+
+.dialog-chat-conversation {
+    box-sizing: border-box;
+    position: relative;
+    height: 80%;
+}
+
+.dialog-chat-conversation-wrapper {
+    height: 100%;
+}
+
+.dialog-header {
+    box-sizing: border-box;
+    height: 10%;
+}
+
+.dialog-history {
+    box-sizing: border-box;
+    height: 90%;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.dialog-history-msg {
+    max-width: 400px;
+    margin: 10px;
+    padding: 10px;
+    border-radius: 5px;
+    height: fit-content;
+    width: fit-content;
+    word-wrap: break-word;
+ }
+
+.dialog-history-in-msg {
+   background-color: gray;
+}
+
+.dialog-history-out-msg {
+    margin-left: auto;
+    background-color: #f07c42;
+ }
+
+.dialog-input {
+    box-sizing: border-box;
+    height: 20%;
+    display: flex;
+}
+
+.dialog-input-txt {
+    box-sizing: border-box;
+    height: 100%;
+    width: 100%;
+    border: 0px;
+    padding: 0;
+    background-color: inherit;
+    color: inherit;
+    resize: none;
+    outline: unset;
+}
+
+#chat-list, #chat-search {
+    margin: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 10px;
+}
+
+.dialog-chatlist-search {
+    display: block;
+    width: 100%;
+    height: 30px;
+}
+
+.dialog-chatlist-search-input {
+    display: block;
+    height: 100%; 
+    width: 100%;
+    border-radius: none;
+    border: none;
+    color: inherit;
+    background-color: inherit;
+    outline: none
+}
+
+.dialog-chatlist-item, .dialog-chatlist-search-item {
+    cursor: pointer;
+    list-style-type: none;
+    padding: 6px 0 6px 0;
+}
+
+.dialog-chatlist-item-current {
+    background-color: #f07c42;
+}
+
+.dialog-chatlist-item:hover:not(.dialog-chatlist-item-current) {
+    background-color: #b88f7a;
+}
+
+.dialog-chatlist-search-item:hover {
+    background-color: #b88f7a;
+}
+
+#chat-notification {
+    position: absolute;
+    bottom: 3px;
+    background-color: #b88f7a;
+    width: fit-content;
+    border-radius: 5px;
+    padding: 1px;
+    box-shadow: 0 0 3px black;
+}
+
+.logout { 
+    font-size: 12pt;
+    color: inherit;
+    margin: 0 0 0 auto;
+}

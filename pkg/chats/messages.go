@@ -3,6 +3,7 @@ package chats
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Elena-S/Chat/pkg/database"
@@ -19,22 +20,27 @@ type Message struct {
 	Service  bool
 }
 
-func (message *Message) Register(sender users.User) (err error) {
+func (message *Message) Register(senderID uint) (err error) {
 	if message.ID != 0 {
-		err = errors.New("non zero message identifier")
+		err = errors.New("chats: got non zero message identifier")
 		return
 	}
 	if message.ChatID == 0 {
-		err = errors.New("zero chat identifier")
+		err = errors.New("chats: got zero chat identifier")
 		return
 	}
 	if message.Text == "" {
-		err = errors.New("empty message")
+		err = errors.New("chats: empty message")
 		return
 	}
 
-	message.AuthorID = (&sender).ID()
-	message.Author = (&sender).FullName()
+	sender, err := users.GetUserByID(senderID)
+	if err != nil {
+		err = fmt.Errorf("chats: the sender with the given id %d is not exists", senderID)
+		return
+	}
+	message.AuthorID = senderID
+	message.Author = sender.FullName()
 	message.Date = time.Now()
 
 	if message.Service {
@@ -63,11 +69,10 @@ func (message *Message) Chat() (chat *Chat) {
 }
 
 func (message *Message) create(tx *sql.Tx) (err error) {
-	row := tx.QueryRow(`
+	return tx.QueryRow(`
 	INSERT INTO chat_messages (chat_id, author_id, date, text) 
 	VALUES ($1, $2, $3, $4)
-	RETURNING id`, message.ChatID, message.AuthorID, message.Date, message.Text)
-	return row.Scan(&message.ID)
+	RETURNING id`, message.ChatID, message.AuthorID, message.Date, message.Text).Scan(&message.ID)
 }
 
 type History struct {
@@ -75,9 +80,9 @@ type History struct {
 	Messages []Message
 }
 
-func (history *History) Fill(user users.User, chatID uint, messageID uint) (err error) {
+func (history *History) Fill(userID uint, chatID uint, messageID uint) (err error) {
 	if chatID == 0 {
-		err = errors.New("zero chat id")
+		err = errors.New("chats: got zero chat id")
 		return
 	}
 
@@ -101,7 +106,7 @@ func (history *History) Fill(user users.User, chatID uint, messageID uint) (err 
 		ON chat_messages.author_id = users.id
 	ORDER BY
 		chat_messages.id DESC
-	LIMIT 100`, chatID, (&user).ID(), messageID)
+	LIMIT 100`, chatID, userID, messageID)
 	if err != nil {
 		return
 	}

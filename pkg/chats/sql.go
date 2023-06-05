@@ -8,12 +8,11 @@ import (
 )
 
 type QueryChat struct {
-	CommonText string
-	Params     []any
+	Text   string
+	Params []any
 }
 
 func (q *QueryChat) fullText() string {
-
 	return fmt.Sprintf(`
 	WITH common_chat_info AS (%s),
 	last_message_info AS (SELECT
@@ -53,7 +52,7 @@ func (q *QueryChat) fullText() string {
 		LEFT JOIN contacts_info
 		ON common_chat_info.id = contacts_info.id
 	ORDER BY
-		last_message_date DESC, name`, q.CommonText)
+		last_message_date DESC, name`, q.Text)
 }
 
 func (q *QueryChat) result() (chatArr []Chat, err error) {

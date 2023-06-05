@@ -6,55 +6,14 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"sync"
+	"regexp"
 )
 
 var (
-	ErrInvalidCredentials = errors.New("login and password shouldn't be empty")
-	ErrInvalidRegData     = errors.New("first name should be filled")
+	ErrInvalidLoginFormat = errors.New("users: invalid login format")
+	ErrInvalidCredentials = errors.New("users: login and password shouldn't be empty")
+	ErrInvalidRegData     = errors.New("users: first name should be filled")
 )
-
-var tokenCashe sync.Map //JWT token
-
-func NewToken(user User) (string, error) {
-	token, err := token(user.Login())
-	if err != nil {
-		return token, err
-	}
-	tokenCashe.Store(token, user)
-	return token, nil
-}
-
-func GetUserByToken(token string) (User, error) {
-	user := User{}
-	if token == "" {
-		return user, errors.New("missing token")
-	}
-
-	value, ok := tokenCashe.Load(token)
-	if !ok {
-		return user, errors.New("gotten wrong token")
-	}
-
-	user, ok = value.(User)
-	if !ok {
-		return user, errors.New("mismatched type of user")
-	}
-
-	return user, nil
-}
-
-func DeleteToken(token string) {
-	tokenCashe.Delete(token)
-}
-
-func token(s string) (string, error) {
-	salt, err := randSalt()
-	if err != nil {
-		return "", nil
-	}
-	return hash(salt, s), nil
-}
 
 func hash(salt []byte, s string) string {
 	var buf bytes.Buffer
@@ -76,6 +35,13 @@ func randSalt() ([]byte, error) {
 func checkCredentials(login, pwd string) error {
 	if login == "" || pwd == "" {
 		return ErrInvalidCredentials
+	}
+	matched, err := regexp.MatchString(`^\+(?:[0-9] ?){6,14}[0-9]$`, login)
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return ErrInvalidLoginFormat
 	}
 	return nil
 }

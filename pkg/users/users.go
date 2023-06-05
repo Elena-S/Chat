@@ -10,45 +10,52 @@ import (
 	"strings"
 
 	"github.com/Elena-S/Chat/pkg/database"
+	"github.com/Elena-S/Chat/pkg/vault"
 )
 
 var (
-	ErrUsrExists        = errors.New("a user with this phone number already exists")
-	ErrNumUsr           = errors.New("there is more than 1 user with the same pnone number")
-	ErrWrongCredentials = errors.New("wrong login or password")
+	ErrUsrExists        = errors.New("users: a user with this phone number already exists")
+	ErrNumUsr           = errors.New("users: there is more than 1 user with the same pnone number")
+	ErrWrongCredentials = errors.New("users: wrong login or password")
 )
 
 type User struct {
-	id           uint
-	phone        string
-	firstName    string
-	lastName     string
-	fullName     string
-	searchName   string
-	salt         []byte
-	passwordHash string
+	id         uint
+	phone      string
+	firstName  string
+	lastName   string
+	fullName   string
+	searchName string
+	secret     vault.Secret
 }
 
 func (user *User) Authorize(login, pwd string) (err error) {
 	err = checkCredentials(login, pwd)
 	if err != nil {
-		return err
+		return
 	}
 
 	user.phone = login
 
 	ok, err := user.exists()
 	if err != nil {
-		return err
+		return
 	} else if !ok {
 		return ErrWrongCredentials
 	}
-	pwdHash := hash(user.salt, pwd)
 
-	if pwdHash != user.passwordHash {
+	secret, err := vault.ReadSecret(user.phone)
+	if err != nil {
+		return
+	}
+
+	pwdHash := hash(secret.Salt, pwd)
+
+	if pwdHash != secret.PasswordHash {
 		err = ErrWrongCredentials
 	}
-	return err
+
+	return
 }
 
 func (user *User) Register(login, pwd, firstName, lastName string) (err error) {
@@ -57,7 +64,7 @@ func (user *User) Register(login, pwd, firstName, lastName string) (err error) {
 		return
 	}
 
-	salt, err := randSalt()
+	user.secret.Salt, err = randSalt()
 	if err != nil {
 		return
 	}
@@ -67,8 +74,7 @@ func (user *User) Register(login, pwd, firstName, lastName string) (err error) {
 	user.lastName = strings.TrimSpace(lastName)
 	user.fullName = fmt.Sprintf("%s %s", firstName, lastName)
 	user.searchName = strings.ToLower(user.fullName)
-	user.salt = salt
-	user.passwordHash = hash(salt, pwd) //needs store in Vault
+	user.secret.PasswordHash = hash(user.secret.Salt, pwd)
 
 retry:
 	err = user.createNX()
@@ -85,6 +91,10 @@ func (user *User) FullName() string {
 
 func (user *User) ID() uint {
 	return user.id
+}
+
+func (user *User) IDToString() string {
+	return strconv.FormatUint(uint64(user.id), 10)
 }
 
 func (user *User) Login() string {
@@ -104,7 +114,11 @@ func (user *User) createNX() (err error) {
 	}
 
 	err = user.create(tx)
+	if err != nil {
+		return
+	}
 
+	err = vault.WriteSecret(user.phone, user.secret)
 	if err != nil {
 		return
 	}
@@ -116,7 +130,7 @@ func (user *User) createNX() (err error) {
 func (user *User) exists() (exists bool, err error) {
 	rows, err := database.DB().Query(`
 	SELECT
-		id, first_name, last_name, full_name, salt, password_hash
+		id, first_name, last_name, full_name
 	FROM users
 	WHERE phone = $1`, user.phone)
 	if err != nil {
@@ -124,7 +138,7 @@ func (user *User) exists() (exists bool, err error) {
 	}
 	defer rows.Close()
 	if rows.Next() {
-		err = rows.Scan(&user.id, &user.firstName, &user.lastName, &user.fullName, &user.salt, &user.passwordHash)
+		err = rows.Scan(&user.id, &user.firstName, &user.lastName, &user.fullName)
 		if err != nil {
 			return
 		}
@@ -138,11 +152,11 @@ func (user *User) exists() (exists bool, err error) {
 
 func (user *User) create(tx *sql.Tx) (err error) {
 	return tx.QueryRow(`
-	INSERT INTO users (phone, first_name, last_name, full_name, search_name, password_hash, salt)
-	VALUES ($1, $2, $3, $4, $5, $6, $7)
+	INSERT INTO users (phone, first_name, last_name, full_name, search_name)
+	VALUES ($1, $2, $3, $4, $5)
 	RETURNING id`,
 		user.phone, user.firstName, user.lastName,
-		user.fullName, user.searchName, user.passwordHash, user.salt).Scan(&user.id)
+		user.fullName, user.searchName).Scan(&user.id)
 }
 
 func (user *User) MarshalJSON() (data []byte, err error) {
@@ -193,4 +207,16 @@ func (user *User) MarshalJSON() (data []byte, err error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+func GetUserByID(userID uint) (*User, error) {
+	user := new(User)
+	err := database.DB().QueryRow(`
+	SELECT id, phone, first_name, last_name, full_name
+	FROM users
+	WHERE id = $1`, userID).Scan(&user.id, &user.phone, &user.firstName, &user.lastName, &user.fullName)
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
 }

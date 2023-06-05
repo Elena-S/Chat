@@ -32,8 +32,6 @@ CREATE TABLE IF NOT EXISTS public.users
     last_name character varying(200) COLLATE pg_catalog."default",
     full_name character varying(300) COLLATE pg_catalog."default",
     search_name character varying(300) COLLATE pg_catalog."default",
-    salt bytea,
-    password_hash text COLLATE pg_catalog."default",
     CONSTRAINT users_pkey PRIMARY KEY (id)
 )	
 TABLESPACE pg_default;

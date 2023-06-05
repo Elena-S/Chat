@@ -2,9 +2,12 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/Elena-S/Chat/pkg/logger"
 	"github.com/lib/pq"
@@ -32,6 +35,8 @@ type dbInstance struct {
 }
 
 func (dbi *dbInstance) connect() {
+	var err error
+
 	dsn := fmt.Sprintf(
 		//needs config file
 		"host=db user=%s password=%s dbname=%s port=5432 sslmode=disable TimeZone=Europe/Moscow",
@@ -50,6 +55,20 @@ func (dbi *dbInstance) connect() {
 	ctxLogger.Info("Start")
 
 	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		ctxLogger.Fatal(err.Error())
+	}
+
+	for i := 0; i < 3; i++ {
+		err = db.Ping()
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			time.Sleep(time.Second)
+			continue
+		} else {
+			break
+		}
+	}
+
 	if err != nil {
 		ctxLogger.Fatal(err.Error())
 	}

@@ -1,10 +1,10 @@
 package handlers
 
 import (
-	"errors"
-	"fmt"
+	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 
 	"github.com/Elena-S/Chat/pkg/logger"
 	"github.com/Elena-S/Chat/pkg/users"
@@ -12,9 +12,12 @@ import (
 )
 
 func setStatusOfError(rw http.ResponseWriter, ctxLogger *zap.Logger, err error) {
-	if err != nil {
+	if data := recover(); data != nil {
+		rw.WriteHeader(http.StatusInternalServerError)
+		logger.ErrorPanic(ctxLogger, data)
+	} else if err != nil {
 		switch err {
-		case users.ErrInvalidCredentials:
+		case users.ErrInvalidCredentials, users.ErrInvalidLoginFormat:
 			rw.WriteHeader(http.StatusBadRequest)
 			io.WriteString(rw, err.Error())
 		case users.ErrUsrExists, users.ErrWrongCredentials:
@@ -24,36 +27,24 @@ func setStatusOfError(rw http.ResponseWriter, ctxLogger *zap.Logger, err error) 
 			rw.WriteHeader(http.StatusInternalServerError)
 		}
 		ctxLogger.Error(err.Error())
+	}
+}
+
+func redirectToErrorPage(rw http.ResponseWriter, r *http.Request, ctxLogger *zap.Logger, err error) {
+	if err != nil {
+		ctxLogger.Error(err.Error())
+		http.Redirect(rw, r, os.Getenv("URL_ERROR"), http.StatusSeeOther)
 	} else if data := recover(); data != nil {
-		rw.WriteHeader(http.StatusInternalServerError)
 		logger.ErrorPanic(ctxLogger, data)
+		http.Redirect(rw, r, os.Getenv("URL_ERROR"), http.StatusSeeOther)
 	}
 }
 
-func setToken(user users.User, r *http.Request, rw http.ResponseWriter) error {
-	token, err := users.NewToken(user)
+func writeJSONContent(rw http.ResponseWriter, object any) (err error) {
+	err = json.NewEncoder(rw).Encode(object)
 	if err != nil {
-		return err
+		return
 	}
-	rw.Header().Add("Set-Cookie", fmt.Sprintf("token=%s; secure; httpOnly; sameSite=strict", token))
-	return err
+	rw.Header().Set("Content-Type", "application/json")
+	return
 }
-
-func getUser(r *http.Request) (users.User, error) {
-	cookie, err := r.Cookie("token")
-	if err != nil {
-		return users.User{}, errors.New("unauthorized user")
-	}
-
-	return users.GetUserByToken(cookie.Value)
-}
-
-// func deleteToken(r *http.Request) error {
-// 	cookie, err := r.Cookie("token")
-// 	if err != nil {
-// 		return errors.New("unauthorized user")
-// 	}
-// 	users.DeleteToken(cookie.Value)
-
-// 	return nil
-// }

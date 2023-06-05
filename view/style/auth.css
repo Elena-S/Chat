@@ -1,0 +1,54 @@
+.auth-submit {
+    margin: 10px 0 0 5px;
+    padding: 10px 15px;
+}
+
+.auth-field {
+    padding: 5px 0 5px 0;
+}
+
+.auth-field label, input {
+    display: inline-block;
+    height: 25px;
+}
+
+.auth-field label {
+    width: 140px;
+}
+
+.auth-field input {
+    width: 250px;
+}
+
+.auth-field input[type="checkbox"] {
+    margin: 0;
+    width: 25px;
+    border: none;
+}
+
+.auth-options {
+    display: flex;
+}
+
+.auth-option {
+    cursor: pointer;
+    margin-right: 20px;
+}
+
+.auth-option-inactive {
+    color: gray;
+}
+
+.auth-option-active {
+    position: relative;
+    display: inline-block;
+  }
+
+.auth-option-active:after{
+    position: absolute;
+    width: 100%; 
+    content: " ";
+    background: #9400ff;
+    height: 2px;
+    bottom: 15px;
+  }

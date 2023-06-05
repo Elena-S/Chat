@@ -68,7 +68,7 @@ func (m *manager) retrieveConns(userID uint) (cs sync.Map, ok bool, err error) {
 	value, ok := m.pool.Load(userID)
 	if ok {
 		if cs, ok = value.(sync.Map); !ok {
-			return cs, ok, errors.New("conns: gotten wrong type")
+			return cs, ok, errors.New("conns: got wrong type")
 		}
 	}
 	return cs, ok, nil

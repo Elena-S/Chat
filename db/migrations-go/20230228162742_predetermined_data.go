@@ -3,7 +3,6 @@ package migrations
 import (
 	"bytes"
 	"database/sql"
-	"fmt"
 	"html/template"
 
 	"github.com/Elena-S/Chat/pkg/chats"
@@ -34,22 +33,40 @@ func downPredeterminedData(tx *sql.Tx) error {
 
 func updateChatTypes(tx *sql.Tx) (err error) {
 	templ, err := template.New("query").Parse(`
-	SELECT
-		id, SUM(exists) exists
-	FROM (
-		SELECT
-			id, name, 1 exists, 1 delete
-		FROM chat_types
-		{{range .}}
-		UNION ALL
-
-		SELECT
-			{{.ID}}, '{{.Name}}', 0 exists, 0{{end}}) T
-	GROUP BY
-		id
-	HAVING
-		MAX(exists) = 0 OR MIN(delete) = 1 OR NOT MIN(name) = MAX(name)
-	`)
+	MERGE INTO chat_types
+	USING
+		(SELECT 
+			id,
+			MAX(CASE
+					WHEN exists = -1
+						THEN name
+					ELSE NULL
+				END) name,
+			SUM(exists) exists
+		FROM
+			(SELECT
+				id,
+				name,
+				1 exists
+			FROM chat_types
+			{{range .}}
+			UNION ALL
+			
+			SELECT
+				{{.ID}},
+				'{{.Name}}',
+				-1{{end}}) T
+			GROUP BY ID
+			HAVING
+				NOT(MAX(exists) = 0 AND MIN(name) = MAX(name))) AS data
+	ON chat_types.id = data.id
+	WHEN MATCHED AND data.exists = 1 THEN
+	DELETE
+	WHEN MATCHED AND data.exists = 0 THEN
+	UPDATE SET name = data.name
+	WHEN NOT MATCHED THEN
+	INSERT (id, name)
+	VALUES(data.id, data.name)`)
 
 	if err != nil {
 		return
@@ -60,48 +77,6 @@ func updateChatTypes(tx *sql.Tx) (err error) {
 	if err != nil {
 		return
 	}
-	query := buf.String()
-
-	rows, err := tx.Query(query)
-	if err != nil {
-		return
-	}
-
-	defer rows.Close()
-
-	buf.Reset()
-
-	res := struct {
-		ID     chats.ChatTypeID
-		Exists uint8
-	}{}
-	for rows.Next() {
-		err = rows.Scan(&res.ID, &res.Exists)
-		if err != nil {
-			return
-		}
-
-		chatType := PredeterminedChatTypes[res.ID]
-		switch res.Exists {
-		case 0:
-			query = fmt.Sprintf(`
-			INSERT INTO public.chat_types (id, name)
-			VALUES (%d, '%s');`, chatType.ID, chatType.Name)
-			buf.WriteString(query)
-		case 1:
-			query = fmt.Sprintf(`
-			DELETE FROM public.chat_types
-			WHERE id = %d;`, chatType.ID)
-			buf.WriteString(query)
-		case 2:
-			query = fmt.Sprintf(`
-			UPDATE public.chat_types
-			SET (name = '%s')
-			WHERE id = %d;`, chatType.Name, chatType.ID)
-			buf.WriteString(query)
-		}
-	}
-
 	_, err = tx.Exec(buf.String())
 
 	return

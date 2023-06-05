@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <link type="text/css" rel="stylesheet" href="/view/chat/style/style.css"/>
+    <link type="text/css" rel="stylesheet" href="/view/style/common.css"/>
+    <script type="text/javascript" src="/view/chat/scripts/message.js"></script>
+</head>
+<body>
+    <div class="main-column">
+        <div class="header">
+            <div class="app-name">
+                <h1>Blabber</h1>
+                <span>Let's chat!</span>
+            </div>
+            <a class="logout" href="https://localhost:4444/oauth2/sessions/logout">Logout</a>
+        </div>
+        <div class="dialog-main">
+            <div class="dialog-chatlist dialog-common">
+                <div class="dialog-chatlist-search">
+                    <input id="chat-search-phrase" class="dialog-chatlist-search-input" type="search" name="search_phrase" placeholder="Search">
+                </div>
+                <ul id="chat-search"></ul>
+                <ul id="chat-list"></ul>
+            </div>
+            <div class="dialog-chat dialog-common">
+                <div class="dialog-chat-conversation">
+                    <div class="dialog-chat-conversation-wrapper">
+                        <div id="chat-header" class="dialog-common dialog-header"></div>
+                        <div id="chat-history" class="dialog-history dialog-common"></div>
+                    </div>
+                    <div id="chat-notification" class="invisible"></div>
+                </div>
+                <form class="dialog-input">
+                    <textarea id="chat-message" class="dialog-input-txt" name="message" placeholder="Input text..." required></textarea>
+                </form>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

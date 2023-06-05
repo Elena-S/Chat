@@ -3,19 +3,22 @@ services:
   web:
     build:
       context: .
-      target: debug
+      target: prod
     depends_on:
       - db
+      - hydra
+      - vault
     env_file:
       - .env
     ports:
       - 8000:8000
-      - 2345:2345
     volumes:
-      - .:/usr/src/app
-    security_opt:
-      - "seccomp:unconfined"
-    command: /bin/sh -c "while sleep 1000; do :; done" #go run main.go
+      - ./cert:/usr/src/app/cert
+      - ./view:/usr/src/app/view
+      - ./logs:/usr/src/app/logs
+      - ./db:/usr/src/app/db
+    networks:
+      chat_net: {}
   db:
     image: postgres:alpine
     environment:
@@ -26,6 +29,92 @@ services:
       - 5432:5432
     volumes:
       - postgres-db:/var/lib/postgresql/data
-
+    networks:
+      chat_net: {}
+  vault:
+    image: hashicorp/vault:1.13.2
+    depends_on:
+      - vault-autounseal
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - VAULT_ADDR=http://127.0.0.1:8100
+      - VAULT_TOKEN=${VAULT_CLIENT_UNSEAL_TOKEN}
+    ports:
+      - 8100:8100
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./vault/config:/vault/config
+      - ./vault/policies:/vault/policies
+      - ./vault/logs:/vault/logs
+      - ./vault/data:/vault/data
+      - ./vault/file:/vault/file
+    networks:
+      chat_net: {}
+    command: sh /vault/config/script.sh
+  vault-autounseal:
+    image: hashicorp/vault:1.13.2
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - VAULT_ADDR=http://127.0.0.1:8200
+      - VAULT_TOKEN=${VAULT_UNSEAL_TOKEN}
+      - VAULT_UNSEAL_KEY=${VAULT_UNSEAL_KEY}
+    ports:
+      - 8200:8200
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./vault-autounseal/config:/vault/config
+      - ./vault-autounseal/policies:/vault/policies
+      - ./vault-autounseal/logs:/vault/logs
+      - ./vault-autounseal/data:/vault/data
+      - ./vault-autounseal/file:/vault/file
+    networks:
+      chat_net: {}
+    command: sh /vault/config/script.sh
+  hydra:
+    image: oryd/hydra:v2.1.2
+    ports:
+      - "4444:4444"
+      - "4445:4445"
+    command: serve all --dev
+    environment:
+      - URLS_SELF_ISSUER=https://localhost:4444
+      - URLS_LOGIN=https://localhost:8000/authentication/login
+      - URLS_CONSENT=https://localhost:8000/authentication/consent
+      - URLS_LOGOUT=https://localhost:8000/authentication/logout
+      - URLS_ERROR=${URL_ERROR}
+      - URLS_POST_LOGOUT_REDIRECT=https://localhost:8000
+      - DSN=memory
+      - SECRETS_SYSTEM=${HYDRA_SECRETS_SYSTEM}
+      - OIDC_SUBJECT_IDENTIFIERS_SUPPORTED_TYPES=public,pairwise
+      - OIDC_SUBJECT_IDENTIFIERS_PAIRWISE_SALT=${HYDRA_OIDC_SUBJECT_IDENTIFIERS_PAIRWISE_SALT}
+      - TTL_ACCESS_TOKEN=72h
+      - TTL_REFRESH_TOKEN=4320h
+      - SERVE_ADMIN_TLS_KEY_PATH=/hydra/cert/privateKey.key
+      - SERVE_ADMIN_TLS_CERT_PATH=/hydra/cert/certificate.crt
+      - SERVE_ADMIN_TLS_ENABLED=true
+      - SERVE_PUBLIC_TLS_KEY_PATH=/hydra/cert/privateKey.key
+      - SERVE_PUBLIC_TLS_CERT_PATH=/hydra/cert/certificate.crt
+      - SERVE_PUBLIC_TLS_ENABLED=true
+      - SERVE_COOKIES_SECURE=true
+      - SERVE_COOKIES_SAME_SITE_MODE=Strict
+      - SERVE_COOKIES_NAMES_LOGIN_CSRF=__Secure-login_csrf
+      - SERVE_COOKIES_NAMES_CONSENT_CSRF=__Secure-consent_csrf
+      - SERVE_COOKIES_NAMES_SESSION=__Secure-session
+      - SERVE_COOKIES_PATHS_SESSION=/
+    volumes:
+      - ./cert:/hydra/cert
+    restart: unless-stopped
+    networks:
+      chat_net: {}
 volumes:
   postgres-db:
+networks:
+  chat_net:
+    name: chat
+    driver: bridge
+    ipam:
+      driver: default
