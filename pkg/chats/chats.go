@@ -305,7 +305,7 @@ FROM
 	}
 
 	if len(chats) == 0 {
-		err = fmt.Errorf("chats: chat with ID %d and user ID %d is not exists", ID, userID)
+		err = fmt.Errorf("chats: chat with ID %d and user ID %d not exists", ID, userID)
 		return
 	}
 
