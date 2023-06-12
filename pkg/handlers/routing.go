@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Elena-S/Chat/pkg/hydra"
 	"github.com/Elena-S/Chat/pkg/logger"
@@ -31,7 +32,8 @@ func Home(rw http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		oAuthUrl, err := hydra.OAuthConf.OAuthURL()
+		var oAuthUrl string
+		oAuthUrl, err = hydra.OAuthConf.OAuthURL(r.Context())
 		if err != nil {
 			return
 		}
@@ -170,8 +172,8 @@ func FinishAuth(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := hydra.States.LoadAndDelete(state); !ok {
-		err = errors.New("handlers: the state is not exists")
+	_, err = hydra.StatesStorage.GetEx(r.Context(), fmt.Sprintf(hydra.KeyStateTemplate, state), time.Duration(0))
+	if err != nil {
 		return
 	}
 
@@ -269,9 +271,9 @@ func loginPOST(rw http.ResponseWriter, r *http.Request) {
 	if r.Form.Get("registration") == "on" {
 		fn := r.Form.Get("first_name")
 		ln := r.Form.Get("last_name")
-		err = user.Register(login, pwd, fn, ln)
+		err = user.Register(r.Context(), login, pwd, fn, ln)
 	} else {
-		err = user.Authorize(login, pwd)
+		err = user.Authorize(r.Context(), login, pwd)
 	}
 
 	if err != nil {

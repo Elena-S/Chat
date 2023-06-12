@@ -40,7 +40,7 @@ type Chat struct {
 	LastMessageDate time.Time
 }
 
-func (chat *Chat) Register(r io.Reader, ownerID uint) (err error) {
+func (chat *Chat) Register(ctx context.Context, r io.Reader, ownerID uint) (err error) {
 	err = json.NewDecoder(r).Decode(chat)
 	if err != nil {
 		return
@@ -60,7 +60,7 @@ func (chat *Chat) Register(r io.Reader, ownerID uint) (err error) {
 	}
 
 retry:
-	err = chat.createNX()
+	err = chat.createNX(ctx)
 	if database.SerializationFailureError(err) {
 		goto retry
 	}
@@ -101,8 +101,8 @@ func (chat *Chat) SendMessage(message Message) (err error) {
 	return
 }
 
-func (chat *Chat) createNX() (err error) {
-	tx, err := database.DB().BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelSerializable})
+func (chat *Chat) createNX(ctx context.Context) (err error) {
+	tx, err := database.DB().BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return
 	}

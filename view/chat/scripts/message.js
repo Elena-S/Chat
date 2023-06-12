@@ -1,7 +1,7 @@
-
-window.addEventListener('load', () => { 
+window.addEventListener('load', async () => { 
+    user = new User(await User.getData());  
     tokenRefresher.refresh(true);
-    const chatManager = new ChatView();   
+    const chatManager = new ChatView(); 
 });
 
 class ChatView {
@@ -54,10 +54,7 @@ class ChatView {
             return;
         }
 
-        if (!chat.id()) {
-            if (isService) {
-                return;
-            }
+        if (!chat.id() && !isService) {
             chat = await Chat.create(chat);
             if (!chat) {
                 return;
@@ -86,7 +83,7 @@ class ChatView {
 
     #notify = function() {
         let id;
-        return (rawMessage) => {
+        return function(rawMessage) {
                 clearTimeout(id);
                 this._notifier.innerHTML = rawMessage.Text;
                 this._notifier.classList.remove('invisible');
@@ -218,14 +215,20 @@ class User {
     #firstName;
     #lastName;
     #fullName;
-    constructor() {
-        fetchJSON('chat/user', (data) => {
-            this._id = data.ID;
-            this.#phone=  data.Phone;
-            this.#firstName = data.FirstName;
-            this.#lastName = data.LastName;
-            this.#fullName = data.FullName;
-        });
+
+    static async getData() {
+        return await fetchPostJSON('chat/user').then((data) => { return data });
+    }
+
+    constructor(data) {
+        this._element = document.getElementById('chat-user-brief-info');
+        this._id = data.ID || 0;
+        this.#phone = data.Phone || '';
+        this.#firstName = data.FirstName || '';
+        this.#lastName = data.LastName || '';
+        this.#fullName = data.FullName || '';
+
+        this._element.innerHTML = `${this.#fullName} ${this.#phone}`;
     }
 
     id() {
@@ -685,15 +688,15 @@ class TokenRefresher {
                 sleep(1000);
             }
             context.#pendingRequests ++;
-            return await callback.apply(this, arguments);
+            const result = await callback.apply(this, arguments);
             context.#pendingRequests --;
+            return result;
         }
     }
 
     async refresh(skip = false) {
         if (!skip) {
-            let attempts = 3;
-            while (attempts > 0) {
+            for (let attempt = 0; attempt < 3; attempt++) {
                 this.#refreshing = true;
                 while (this.#pendingRequests > 0) {
                     await sleep(1000);
@@ -710,8 +713,7 @@ class TokenRefresher {
                     break;    
                 }
 
-                attempts--;
-                if (attempts > 0) {
+                if (attempt < 2) {
                    await sleep(600000); 
                 }
             }
@@ -751,6 +753,10 @@ function flushAndThrottle(callback, ms) {
                     id = undefined;
                 }, ms);
     }
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 const tokenRefresher = new TokenRefresher();
@@ -793,10 +799,7 @@ const fetchPostJSON = tokenRefresher.wrapAsyncRequest(async function(request, da
     }
  });
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 const host = 'localhost:8000';
 const reqURL = `https://${ host }/`;
-const user = new User();
+
+let user;

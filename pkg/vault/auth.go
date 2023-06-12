@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -10,6 +11,8 @@ import (
 	vault "github.com/hashicorp/vault/api"
 	auth "github.com/hashicorp/vault/api/auth/approle"
 )
+
+const envAppRoleID = "APPROLE_ROLE_ID"
 
 var (
 	once   sync.Once
@@ -88,9 +91,9 @@ func manageTokenLifecycle(client *vault.Client, token *vault.Secret) error {
 }
 
 func login(client *vault.Client) (*vault.Secret, error) {
-	roleID := os.Getenv("APPROLE_ROLE_ID")
+	roleID := os.Getenv(envAppRoleID)
 	if roleID == "" {
-		return nil, errors.New("vault: no role ID was provided in APPROLE_ROLE_ID env var")
+		return nil, fmt.Errorf("vault: no role ID was provided in %s env var", envAppRoleID)
 	}
 
 	secretID := &auth.SecretID{FromEnv: "APPROLE_SECRET_ID"}

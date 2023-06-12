@@ -1,0 +1,1 @@
+user chat on #18f8dd2c07250b0aabf8dbc8b21c898977bb9664679192864655f96a1ec8861e -@all +@read +@write -select +select|0 +set +get +client|setname allkeys  

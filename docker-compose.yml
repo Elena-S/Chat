@@ -8,6 +8,7 @@ services:
       - db
       - hydra
       - vault
+      - redis
     env_file:
       - .env
     ports:
@@ -110,8 +111,19 @@ services:
     restart: unless-stopped
     networks:
       chat_net: {}
+  redis:
+    image: redis:7-alpine
+    ports:
+      - 6379:6379
+    volumes:
+      - redis-db:/data
+      - ./redis:/redis
+    networks:
+      chat_net: {}
+    command: redis-server /redis/redis.conf
 volumes:
   postgres-db:
+  redis-db:
 networks:
   chat_net:
     name: chat

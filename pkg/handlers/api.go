@@ -120,7 +120,7 @@ func CreateChat(rw http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	chat := new(chats.Chat)
-	err = chat.Register(r.Body, userID)
+	err = chat.Register(r.Context(), r.Body, userID)
 
 	if err != nil {
 		return

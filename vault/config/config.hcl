@@ -11,10 +11,10 @@ listener "tcp" {
 
 seal "transit" {
   address = "http://vault-autounseal:8200"
-  disable_renewal = "false"
+  disable_renewal = false
   key_name = "autounseal"
   mount_path = "transit/"
-  tls_skip_verify = "true"
+  tls_skip_verify = true
 }
 
 disable_mlock = true

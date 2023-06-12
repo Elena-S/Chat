@@ -29,7 +29,7 @@ type User struct {
 	secret     vault.Secret
 }
 
-func (user *User) Authorize(login, pwd string) (err error) {
+func (user *User) Authorize(ctx context.Context, login, pwd string) (err error) {
 	err = checkCredentials(login, pwd)
 	if err != nil {
 		return
@@ -44,7 +44,7 @@ func (user *User) Authorize(login, pwd string) (err error) {
 		return ErrWrongCredentials
 	}
 
-	secret, err := vault.ReadSecret(user.phone)
+	secret, err := vault.ReadSecret(ctx, user.phone)
 	if err != nil {
 		return
 	}
@@ -58,7 +58,7 @@ func (user *User) Authorize(login, pwd string) (err error) {
 	return
 }
 
-func (user *User) Register(login, pwd, firstName, lastName string) (err error) {
+func (user *User) Register(ctx context.Context, login, pwd, firstName, lastName string) (err error) {
 	err = checkRegData(login, pwd, firstName)
 	if err != nil {
 		return
@@ -77,7 +77,7 @@ func (user *User) Register(login, pwd, firstName, lastName string) (err error) {
 	user.secret.PasswordHash = hash(user.secret.Salt, pwd)
 
 retry:
-	err = user.createNX()
+	err = user.createNX(ctx)
 	if database.SerializationFailureError(err) {
 		goto retry
 	}
@@ -101,8 +101,8 @@ func (user *User) Login() string {
 	return user.phone
 }
 
-func (user *User) createNX() (err error) {
-	tx, err := database.DB().BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelSerializable})
+func (user *User) createNX(ctx context.Context) (err error) {
+	tx, err := database.DB().BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	defer tx.Rollback()
 
 	ok, err := user.exists()
@@ -118,7 +118,7 @@ func (user *User) createNX() (err error) {
 		return
 	}
 
-	err = vault.WriteSecret(user.phone, user.secret)
+	err = vault.WriteSecret(ctx, user.phone, user.secret)
 	if err != nil {
 		return
 	}

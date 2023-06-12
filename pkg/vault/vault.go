@@ -15,8 +15,7 @@ type Secret struct {
 	PasswordHash string
 }
 
-func WriteSecret(login string, secret Secret) error {
-	ctx := context.Background()
+func WriteSecret(ctx context.Context, login string, secret Secret) error {
 	_, err := Client().KVv2(secretPath).Put(ctx, login,
 		map[string]any{
 			"salt":          secret.Salt,
@@ -25,8 +24,7 @@ func WriteSecret(login string, secret Secret) error {
 	return err
 }
 
-func ReadSecret(login string) (secret Secret, err error) {
-	ctx := context.Background()
+func ReadSecret(ctx context.Context, login string) (secret Secret, err error) {
 	data, err := Client().KVv2(secretPath).Get(ctx, login)
 	if err != nil {
 		return
@@ -61,7 +59,6 @@ func ReadSecret(login string) (secret Secret, err error) {
 	return
 }
 
-func DeleteSecrete(login string) error {
-	ctx := context.Background()
+func DeleteSecrete(ctx context.Context, login string) error {
 	return Client().KVv2(secretPath).Delete(ctx, login)
 }

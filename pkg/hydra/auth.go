@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Elena-S/Chat/pkg/redis"
 	ory "github.com/ory/client-go"
 	"golang.org/x/oauth2"
 )
@@ -22,9 +25,12 @@ const (
 	GrantTypeRefreshToken = "refresh_token"
 )
 
-var States sync.Map //Redis
-var httpClient *http.Client
+const envClientSecret = "HYDRA_OAUTH2_CLIENT_SECRET"
 
+const KeyStateTemplate = "oAuth2:state:%s"
+
+var httpClient *http.Client
+var OAuthConf *oAuthConf
 var (
 	oAuth2Client     *ory.OAuth2Client
 	oAuth2ClientOnce sync.Once
@@ -34,9 +40,17 @@ var (
 	publicClient     *ory.APIClient
 )
 
-var OAuthConf *oAuthConf
+type SetGetExCloser interface {
+	SetEx(ctx context.Context, key string, value any, expiration time.Duration) error
+	GetEx(ctx context.Context, key string, expiration time.Duration) (string, error)
+	io.Closer
+}
+
+var StatesStorage SetGetExCloser
 
 func init() {
+	StatesStorage = redis.Client()
+
 	httpClient = &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -81,12 +95,15 @@ func PublicClient() *ory.APIClient {
 
 func oAuth2HydraClient() *ory.OAuth2Client {
 	oAuth2ClientOnce.Do(func() {
-		context := context.Background()
-
 		clientName := "Chat"
-		clientSecret := os.Getenv("HYDRA_OAUTH2_CLIENT_SECRET")
+		clientSecret := os.Getenv(envClientSecret)
+		if clientSecret == "" {
+			log.Fatalf("hydra: no client secret was provided in %s env var", envClientSecret)
+		}
 
-		list, response, err := PrivateClient().OAuth2Api.ListOAuth2Clients(context).ClientName(clientName).Execute()
+		ctx := context.Background()
+
+		list, response, err := PrivateClient().OAuth2Api.ListOAuth2Clients(ctx).ClientName(clientName).Execute()
 		if err != nil {
 			log.Fatalf("hydra: an error occured when calling OAuth2Api.ListOAuth2Clients: %v\nfull HTTP response: %v\n", err, response)
 		}
@@ -114,7 +131,7 @@ func oAuth2HydraClient() *ory.OAuth2Client {
 		oAuth2Client.SetBackchannelLogoutSessionRequired(true)
 		oAuth2Client.SetPostLogoutRedirectUris([]string{"https://localhost:8000"})
 
-		oAuth2Client, response, err = PrivateClient().OAuth2Api.CreateOAuth2Client(context).OAuth2Client(*oAuth2Client).Execute()
+		oAuth2Client, response, err = PrivateClient().OAuth2Api.CreateOAuth2Client(ctx).OAuth2Client(*oAuth2Client).Execute()
 		if err != nil {
 			log.Fatalf("hydra: an error occured when calling OAuth2Api.CreateOAuth2Client: %v\nfull HTTP response: %v\n", err, response)
 		}
@@ -129,13 +146,16 @@ type oAuthConf struct {
 	HTTPClient   *http.Client
 }
 
-func (conf *oAuthConf) OAuthURL(opts ...oauth2.AuthCodeOption) (string, error) {
+func (conf *oAuthConf) OAuthURL(ctx context.Context, opts ...oauth2.AuthCodeOption) (string, error) {
 	state, err := generateState()
 	if err != nil {
 		return "", err
 	}
-	States.Store(state, struct{}{}) //Redis with expiration date
-	return conf.Config.AuthCodeURL(state, opts...), err
+	err = StatesStorage.SetEx(ctx, fmt.Sprintf(KeyStateTemplate, state), true, time.Minute*30)
+	if err != nil {
+		return "", err
+	}
+	return conf.Config.AuthCodeURL(state, opts...), nil
 }
 
 func generateState() (string, error) {

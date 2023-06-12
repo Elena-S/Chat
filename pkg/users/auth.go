@@ -58,9 +58,5 @@ func checkRegData(login, pwd, fistName string) error {
 	if err != nil {
 		return err
 	}
-	err = checkName(fistName)
-	if err != nil {
-		return err
-	}
-	return err
+	return checkName(fistName)
 }

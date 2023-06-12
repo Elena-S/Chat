@@ -5,22 +5,31 @@ import (
 
 	_ "github.com/Elena-S/Chat/db/migrations-go"
 	"github.com/Elena-S/Chat/pkg/database"
+	"github.com/Elena-S/Chat/pkg/hydra"
 	"github.com/Elena-S/Chat/pkg/logger"
 	"github.com/Elena-S/Chat/pkg/routs"
 	"github.com/Elena-S/Chat/pkg/vault"
 )
 
 func main() {
-
 	defer finish()
 
 	ctxLogger := logger.Logger.With(logger.EventField("Start of the server"))
 	ctxLogger.Info("")
 
 	db := database.DB()
-	defer db.Close()
-
 	vault.Client()
+
+	defer func() {
+		err := db.Close()
+		if err != nil {
+			ctxLogger.Error(err.Error())
+		}
+		err = hydra.StatesStorage.Close()
+		if err != nil {
+			ctxLogger.Error(err.Error())
+		}
+	}()
 
 	routs.SetupRouts()
 
@@ -28,7 +37,6 @@ func main() {
 	if err := http.ListenAndServeTLS(":8000", "../../cert/certificate.crt", "../../cert/privateKey.key", nil); err != nil {
 		ctxLogger.Fatal(err.Error())
 	}
-
 }
 
 func finish() {

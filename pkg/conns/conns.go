@@ -3,39 +3,38 @@ package conns
 import (
 	"errors"
 	"sync"
-	"sync/atomic"
 
 	"golang.org/x/net/websocket"
 )
 
-var Pool *manager = new(manager)
+var Pool *manager = &manager{pool: new(sync.Map)}
 
 type manager struct {
-	pool       sync.Map
-	currentNum uint64
+	pool       *sync.Map
+	currentNum uint
 	mu         sync.Mutex
 }
 
 type connection struct {
 	// ws  *websocket.Conn
-	num uint64
+	num uint
 }
 
-func (m *manager) Store(userID uint, ws *websocket.Conn) (uint64, error) {
+func (m *manager) Store(userID uint, ws *websocket.Conn) (uint, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cs, _, err := m.retrieveConns(userID)
 	if err != nil {
 		return 0, err
 	}
-	atomic.AddUint64(&m.currentNum, 1)
+	m.currentNum++
 	conn := connection{num: m.currentNum}
 	cs.Store(ws, conn)
 	m.pool.Store(userID, cs)
 	return conn.num, nil
 }
 
-func (m *manager) Get(userID uint) (cs sync.Map, err error) {
+func (m *manager) Get(userID uint) (cs *sync.Map, err error) {
 	cs, ok, err := m.retrieveConns(userID)
 	if err != nil {
 		return
@@ -64,12 +63,14 @@ func (m *manager) CloseAndDelete(userID uint, ws *websocket.Conn) (err error) {
 	return
 }
 
-func (m *manager) retrieveConns(userID uint) (cs sync.Map, ok bool, err error) {
+func (m *manager) retrieveConns(userID uint) (cs *sync.Map, ok bool, err error) {
 	value, ok := m.pool.Load(userID)
 	if ok {
-		if cs, ok = value.(sync.Map); !ok {
+		if cs, ok = value.(*sync.Map); !ok {
 			return cs, ok, errors.New("conns: got wrong type")
 		}
+	} else {
+		cs = new(sync.Map)
 	}
 	return cs, ok, nil
 }

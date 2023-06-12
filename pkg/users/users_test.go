@@ -1,6 +1,7 @@
 package users
 
 import (
+	"context"
 	"testing"
 )
 
@@ -34,7 +35,7 @@ func TestRegisterUser(t *testing.T) {
 	}
 	for _, data := range usersData {
 		user := new(User)
-		err := user.Register(data.login, data.pwd, data.firstName, data.lastName)
+		err := user.Register(context.Background(), data.login, data.pwd, data.firstName, data.lastName)
 		if data.ok && err != nil {
 			t.Errorf("users: the user registration shouldn't executed with an error, but the error has occurred \"%s\". Data: %v", err, data)
 		} else if !data.ok && err == nil {
@@ -53,12 +54,12 @@ func TestAuthorizeUser(t *testing.T) {
 		{},                              //invalid credentials
 		{"", "Test", false},             //invalid credentials
 		{"+00000000000", "", false},     //invalid credentials
-		{"+00000000000", "Test", false}, //invalid login format
+		{"00000000000", "Test", false},  //invalid login format
 		{"+00000000000", "Test", true},  //OK
 		{"+00000000001", "Test", false}} //the user is not exists
 	for _, data := range usersData {
 		user := new(User)
-		err := user.Authorize(data.login, data.pwd)
+		err := user.Authorize(context.Background(), data.login, data.pwd)
 		if data.ok && err != nil {
 			t.Errorf("users: the user authorization shouldn't executed with an error, but the error has occurred \"%s\". Data: %v", err, data)
 		} else if !data.ok && err == nil {

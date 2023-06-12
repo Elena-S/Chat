@@ -84,7 +84,7 @@ func (l *loggerWS) SetUserID(userID uint) {
 	l.fieldUserID.Integer = int64(userID)
 }
 
-func (l *loggerWS) SetNumConn(numConn uint64) {
+func (l *loggerWS) SetNumConn(numConn uint) {
 	l.fieldConnNum.Integer = int64(numConn)
 }
 
