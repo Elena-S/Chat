@@ -7,6 +7,7 @@ window.addEventListener('load', async () => {
 class ChatView {
     #currentChat;
     #ws;
+    #historyRestored;
 
     async #onMessage(event) {
         const rawMessage = JSON.parse(event.data);
@@ -60,7 +61,7 @@ class ChatView {
                 return;
             }
             this._chatList.add(chat);
-            this.setCurrentChat(chat, false);
+            this.setCurrentChat(chat);
         }
 
         if (this.#ws.readyState > 1) {
@@ -125,8 +126,10 @@ class ChatView {
         }
     }
 
-    #onScrollHistory = throttle(async (event) => {
+    #onScrollHistory = throttle(async function(event) {
         const height = this._historyElement.scrollHeight;
+        
+        await this.restoreHistory();
 
         if (event.target.scrollTop <= event.target.clientHeight*2) {
             const messages = await this.#currentChat.updateHistory();
@@ -136,9 +139,9 @@ class ChatView {
         }
     }, 100);
 
-    constructor(chat) {
+    constructor() {
         //data
-        this.#currentChat = chat;
+        this.#historyRestored = false;
         this._chatList = new ChatList(this.#onChoose.bind(this),);
         this._searchList = new SearchList(this.#onChoose.bind(this),  this.#onSearchEnd.bind(this));
 
@@ -167,15 +170,12 @@ class ChatView {
         }   
     }
 
-    setCurrentChat(chat, restoreHistory = true) {
+    setCurrentChat(chat) {
+        this.#historyRestored = false;
         this.#currentChat = chat;
         this._chatList.markChatAsCurrent(chat);
         this.refreshHeader();
         this._inputElement.value = chat.getSavedInputText();
-        
-        if (restoreHistory) {
-            this.restoreHistory();
-        }
 
         let event = new Event('scroll', { bubbles: true });
         this._historyElement.dispatchEvent(event);
@@ -190,9 +190,13 @@ class ChatView {
     }
 
     async restoreHistory() {
+        if (this.#historyRestored) {
+            return;
+        }
         const messages = await this.#currentChat.messages();
         const html = this.#fillHistory(messages);
         this.#displayMessageInHistory(html);
+        this.#historyRestored = true;
     }
 
     #fillHistory(messages) {
@@ -207,7 +211,6 @@ class ChatView {
         this._historyElement.innerHTML = html;
         this._historyElement.scrollTop = this._historyElement.scrollHeight;
     }
-    
 }
 
 class User {
@@ -228,7 +231,7 @@ class User {
         this.#lastName = data.LastName || '';
         this.#fullName = data.FullName || '';
 
-        this._element.innerHTML = `${this.#fullName} ${this.#phone}`;
+        this._element.innerHTML = `${ this.#fullName } ${ this.#phone }`;
     }
 
     id() {
@@ -246,7 +249,7 @@ class ChatList {
     }
 
     newElement(chat) {
-        return `<li class="dialog-chatlist-item dialog-commo" ${ Chat.metaProperty }="${chat.id()}">${this.elementView(chat)}</li>`;
+        return `<li class="dialog-chatlist-item dialog-commo" ${ Chat.metaProperty }="${ chat.id() }">${ this.elementView(chat) }</li>`;
     }
 
     elementView(chat) {
@@ -254,7 +257,7 @@ class ChatList {
             month: 'short',
             day: 'numeric'
         });
-        return `${chat.presentation()}<span> ${strData}</span><div>${chat.lastMessageText().slice(0,30)}</div>`;  
+        return `${ chat.presentation() }<span> ${ strData }</span><div>${ chat.lastMessageText().slice(0,30) }</div>`;  
     }
 
     update() {
@@ -569,7 +572,7 @@ class Message {
         } else {
             classMsg = 'dialog-history-in-msg';  
         }
-        return `<div class="dialog-history-msg ${ classMsg }"><div>${this._author}</div>${this.#text}<div>${strData}</div></div>`;
+        return `<div class="dialog-history-msg ${ classMsg }"><div>${ this._author }</div>${ this.#text }<div>${ strData }</div></div>`;
     }
 
     toJSON() {
@@ -638,7 +641,7 @@ class SearchList {
     }
 
     newElement(chat) {
-        return `<li class="dialog-chatlist-search-item dialog-common" ${Chat.metaProperty}="${chat.vid()}">${chat.presentation()}: <span>${chat.phone()}</span></li>`;
+        return `<li class="dialog-chatlist-search-item dialog-common" ${ Chat.metaProperty }="${ chat.vid() }">${ chat.presentation() }: <span>${ chat.phone() }</span></li>`;
     }
 
     emptyInput() {
@@ -703,7 +706,7 @@ class TokenRefresher {
                 }
                 let response;
                 try {
-                    response = await fetch(`${reqURL}/authentication/refresh_tokens`); 
+                    response = await fetch(`${ reqURL }/authentication/refresh_tokens`); 
                 } catch (error) {
                     console.log(error);
                 }
@@ -763,7 +766,7 @@ const tokenRefresher = new TokenRefresher();
 
 const fetchJSONAsync = tokenRefresher.wrapAsyncRequest(async function(request, callback) {
     try {
-        const response = await fetch(`${reqURL}${request}`);
+        const response = await fetch(`${ reqURL }${ request }`);
         const data = await response.json();
         callback(data);
     } catch (error) {
@@ -773,7 +776,7 @@ const fetchJSONAsync = tokenRefresher.wrapAsyncRequest(async function(request, c
 
 const fetchJSON = tokenRefresher.wrapRequest(function(request, callback) {
     try {
-        fetch(`${reqURL}${request}`)
+        fetch(`${ reqURL }${ request }`)
                         .then((response) => {
                                 return response.json();
                             })
@@ -785,7 +788,7 @@ const fetchJSON = tokenRefresher.wrapRequest(function(request, callback) {
 
 const fetchPostJSON = tokenRefresher.wrapAsyncRequest(async function(request, data = {}) {
     try {
-        const response = await fetch(`${reqURL}${request}`, {
+        const response = await fetch(`${ reqURL }${ request }`, {
             method: "POST",
             cache: "no-cache",
             headers: {

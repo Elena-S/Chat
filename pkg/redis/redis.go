@@ -10,8 +10,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const envRedisUserPwd = "REDIS_USER_PASSWORD"
-
 var (
 	client *redisClient
 	once   sync.Once
@@ -19,6 +17,7 @@ var (
 
 func Client() *redisClient {
 	once.Do(func() {
+		const envRedisUserPwd = "REDIS_USER_PASSWORD"
 		pwd := os.Getenv(envRedisUserPwd)
 		if pwd == "" {
 			log.Fatalf("redis: no password was provided in %s env var", envRedisUserPwd)
