@@ -129,10 +129,13 @@ class ChatView {
     #onScrollHistory = throttle(async function(event) {
         const height = this._historyElement.scrollHeight;
         
-        await this.restoreHistory();
+        this.restoreHistory();
 
-        if (event.target.scrollTop <= event.target.clientHeight*2) {
+        while (event.target.scrollTop <= event.target.clientHeight*2) {
             const messages = await this.#currentChat.updateHistory();
+            if (!messages.length) {
+                break;
+            }
             const html = this.#fillHistory(messages);
             this._historyElement.innerHTML = html + this._historyElement.innerHTML;
             event.target.scrollTop += this._historyElement.scrollHeight - height; 
@@ -162,13 +165,13 @@ class ChatView {
         this._chatList.update();
     }
     
-    async newWebSocketConn() {
+    newWebSocketConn = tokenRefresher.wrapAsyncRequest(async function newWebSocketConn() {
         this.#ws = new WebSocket(`wss://${ host }/chat/ws`);
         this.#ws.addEventListener('message', this.#onMessage.bind(this)); 
         while (this.#ws.readyState < 1) {
             await sleep(100);
         }   
-    }
+    });
 
     setCurrentChat(chat) {
         this.#historyRestored = false;
@@ -189,11 +192,11 @@ class ChatView {
         }
     }
 
-    async restoreHistory() {
+    restoreHistory() {
         if (this.#historyRestored) {
             return;
         }
-        const messages = await this.#currentChat.messages();
+        const messages = this.#currentChat.messages();
         const html = this.#fillHistory(messages);
         this.#displayMessageInHistory(html);
         this.#historyRestored = true;
@@ -201,9 +204,9 @@ class ChatView {
 
     #fillHistory(messages) {
         let html = '';
-        messages.forEach((message) => {
-            html = message.html() + html;
-        });
+        for (let i = messages.length-1; i >= 0; i--) {
+            html = messages[i].html() + html;
+        }
         return html;
     }
 
@@ -438,8 +441,8 @@ class Chat {
         return message;
     }
 
-    async messages() {
-        return await this._history.messages();
+    messages() {
+        return this._history.messages();
     }
 
     async updateHistory() {
@@ -473,22 +476,44 @@ class Chat {
 class History {
     #lastID;
     #messages;
-    #firstUpdate;
     #gotEndOfHistory;
 
-    #load(history) {
-        for (let i = 0; i < history.Messages.length ; i++) {
-            this.add(history.Messages[i]);
+    #insert(message, i) {
+        const context = this;
+        const f = function(message, i) { context.#messages[i] = message };
+        this.#modify(f, message, i);
+    }
+
+    #modify(func, message, ...args) {
+        if (!(message instanceof Message)) { 
+            message = new Message(message);
+        }
+
+        func(message, ...args);
+
+        if (!this.#lastID || this.#lastID > message.id()) {
+            this.#lastID = message.id();
         }
     }
 
-    async #fetchSync() {
+    async #fetchAsync() {
         if (!this._chatID) {
             return;
         }
         await fetchJSONAsync(`chat/history?chat_id=${ this._chatID }&message_id=${ this.#lastID }`, (history) => {
-            if (history.LastID) {
-                this.#load(history);
+            if (!history.LastID) {
+                return;
+            }
+            const oldArr = this.#messages;
+            this.#messages = new Array(oldArr.length + history.Messages.length);
+            let j = 0;
+            for (let i = history.Messages.length-1; i >= 0; i--) {
+                this.#insert(history.Messages[i], j);
+                j++
+            }
+            for (let i = 0; i < oldArr.length; i++) {
+                this.#messages[j] = oldArr[i];
+                j++;
             }
         })
     }
@@ -497,26 +522,17 @@ class History {
         this._chatID = chatID;
         this.#lastID = 0;
         this.#messages = [];
-        this.#firstUpdate = true;
         this.#gotEndOfHistory = false;
     }
 
-    async messages() {
-        if (this.#firstUpdate && this._chatID) {
-            this.#firstUpdate = !this.#firstUpdate;
-            return await this.update();
-        } 
+    messages() {
         return this.#messages;   
     }
 
     add(message) {
-        if (!(message instanceof Message)) { 
-            message = new Message(message);
-        }
-        this.#messages.push(message);
-        if (!this.#lastID || this.#lastID > message.id()) {
-            this.#lastID = message.id();
-        }
+        const context = this;
+        const f = function(message) { context.#messages.push(message) };
+        this.#modify(f, message);
     }
 
     async update() {
@@ -524,11 +540,11 @@ class History {
             return [];
         }
         let len = this.#messages.length;
-        await this.#fetchSync();
+        await this.#fetchAsync();
         if (len == this.#messages.length) {
             this.#gotEndOfHistory = true;    
         }
-        return this.#messages.slice(len, this.#messages.length);
+        return this.#messages.slice(0, this.#messages.length - len);
     }
 }
 
