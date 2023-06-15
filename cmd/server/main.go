@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	_ "github.com/Elena-S/Chat/db/migrations-go"
+	"github.com/Elena-S/Chat/pkg/auth"
 	"github.com/Elena-S/Chat/pkg/database"
-	"github.com/Elena-S/Chat/pkg/hydra"
 	"github.com/Elena-S/Chat/pkg/logger"
 	"github.com/Elena-S/Chat/pkg/routs"
 	"github.com/Elena-S/Chat/pkg/vault"
@@ -25,7 +25,7 @@ func main() {
 		if err != nil {
 			ctxLogger.Error(err.Error())
 		}
-		err = hydra.StatesStorage.Close()
+		err = auth.OAuthManager.Close()
 		if err != nil {
 			ctxLogger.Error(err.Error())
 		}

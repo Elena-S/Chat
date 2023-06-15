@@ -1,23 +1,20 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math/bits"
 	"net"
 	"net/http"
 	"strconv"
 
+	"github.com/Elena-S/Chat/pkg/auth"
 	"github.com/Elena-S/Chat/pkg/chats"
 	"github.com/Elena-S/Chat/pkg/conns"
-	"github.com/Elena-S/Chat/pkg/hydra"
 	"github.com/Elena-S/Chat/pkg/logger"
 	"github.com/Elena-S/Chat/pkg/users"
 	"golang.org/x/net/websocket"
-	"golang.org/x/oauth2"
 )
 
 func RefreshTokens(rw http.ResponseWriter, r *http.Request) {
@@ -26,33 +23,20 @@ func RefreshTokens(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-
+	rh := NewResponseHelper(rw, r)
 	ctxLogger := logger.Logger.With(logger.EventField("Refresh tokens request"))
-	defer func() { setStatusOfError(rw, ctxLogger, err) }()
+	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
-	accessToken, refreshToken, err := retrieveTokens(r)
+	accessToken, refreshToken, err := rh.RetrieveTokens()
 	if err != nil {
 		return
 	}
 
-	tokenInfo, response, err := hydra.PrivateClient().OAuth2Api.IntrospectOAuth2Token(r.Context()).Token(accessToken).Execute()
-	if err != nil {
-		err = fmt.Errorf("handlers: an error occured when calling OAuth2Api.IntrospectOAuth2Token: %w\nfull HTTP response: %v", err, response)
-		return
-	}
-
-	if !(tokenInfo.GetActive() && tokenInfo.GetTokenUse() == hydra.TokenTypeAccess && tokenInfo.GetClientId() == hydra.OAuthConf.Config.ClientID) {
-		err = errors.New("handlers: invalid access token")
-		return
-	}
-
-	ctx := context.WithValue(r.Context(), oauth2.HTTPClient, hydra.OAuthConf.HTTPClient)
-	tokens, err := hydra.OAuthConf.Config.Exchange(ctx, "", oauth2.SetAuthURLParam("grant_type", hydra.GrantTypeRefreshToken), oauth2.SetAuthURLParam(hydra.TokenTypeRefresh, refreshToken))
+	tokens, err := auth.OAuthManager.RefreshTokens(r.Context(), accessToken, refreshToken)
 	if err != nil {
 		return
 	}
-
-	setTokens(rw, tokens)
+	rh.SetTokens(tokens)
 }
 
 func UserAbout(rw http.ResponseWriter, r *http.Request) {
@@ -61,11 +45,11 @@ func UserAbout(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-
+	rh := NewResponseHelper(rw, r)
 	ctxLogger := logger.Logger.With(logger.EventField("User about request"))
-	defer func() { setStatusOfError(rw, ctxLogger, err) }()
+	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
-	userID, err := getUserID(r)
+	userID, err := rh.GetUserID()
 	if err != nil {
 		return
 	}
@@ -73,7 +57,7 @@ func UserAbout(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	writeJSONContent(rw, user)
+	err = rh.WriteJSONContent(user)
 }
 
 func Search(rw http.ResponseWriter, r *http.Request) {
@@ -82,11 +66,11 @@ func Search(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-
+	rh := NewResponseHelper(rw, r)
 	ctxLogger := logger.Logger.With(logger.EventField("Search request"))
-	defer func() { setStatusOfError(rw, ctxLogger, err) }()
+	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
-	userID, err := getUserID(r)
+	userID, err := rh.GetUserID()
 	if err != nil {
 		return
 	}
@@ -99,7 +83,7 @@ func Search(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	writeJSONContent(rw, chatArr)
+	rh.WriteJSONContent(chatArr)
 }
 
 func CreateChat(rw http.ResponseWriter, r *http.Request) {
@@ -108,11 +92,11 @@ func CreateChat(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-
+	rh := NewResponseHelper(rw, r)
 	ctxLogger := logger.Logger.With(logger.EventField("Create chat request"))
-	defer func() { setStatusOfError(rw, ctxLogger, err) }()
+	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
-	userID, err := getUserID(r)
+	userID, err := rh.GetUserID()
 	if err != nil {
 		return
 	}
@@ -125,16 +109,16 @@ func CreateChat(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	writeJSONContent(rw, chat)
+	rh.WriteJSONContent(chat)
 }
 
 func ChatAbout(rw http.ResponseWriter, r *http.Request) {
 	var err error
-
+	rh := NewResponseHelper(rw, r)
 	ctxLogger := logger.Logger.With(logger.EventField("Chat about request"))
-	defer func() { setStatusOfError(rw, ctxLogger, err) }()
+	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
-	userID, err := getUserID(r)
+	userID, err := rh.GetUserID()
 	if err != nil {
 		return
 	}
@@ -147,7 +131,7 @@ func ChatAbout(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	writeJSONContent(rw, chat)
+	rh.WriteJSONContent(chat)
 }
 
 func ChatList(rw http.ResponseWriter, r *http.Request) {
@@ -156,11 +140,11 @@ func ChatList(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-
+	rh := NewResponseHelper(rw, r)
 	ctxLogger := logger.Logger.With(logger.EventField("Chat list request"))
-	defer func() { setStatusOfError(rw, ctxLogger, err) }()
+	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
-	userID, err := getUserID(r)
+	userID, err := rh.GetUserID()
 	if err != nil {
 		return
 	}
@@ -169,7 +153,7 @@ func ChatList(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	writeJSONContent(rw, chatArr)
+	rh.WriteJSONContent(chatArr)
 }
 
 func ChatHistory(rw http.ResponseWriter, r *http.Request) {
@@ -178,11 +162,11 @@ func ChatHistory(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-
+	rh := NewResponseHelper(rw, r)
 	ctxLogger := logger.Logger.With(logger.EventField("Chat history request"))
-	defer func() { setStatusOfError(rw, ctxLogger, err) }()
+	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
-	userID, err := getUserID(r)
+	userID, err := rh.GetUserID()
 	if err != nil {
 		return
 	}
@@ -206,7 +190,7 @@ func ChatHistory(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	writeJSONContent(rw, history)
+	rh.WriteJSONContent(history)
 }
 
 func SendMessage(ws *websocket.Conn) {
@@ -230,9 +214,9 @@ func SendMessage(ws *websocket.Conn) {
 		err = conns.Pool.CloseAndDelete(userID, ws)
 	}()
 
-	r := ws.Request()
+	rh := NewRequestHelper(ws.Request())
 
-	userID, err = getUserID(r)
+	userID, err = rh.GetUserID()
 	if err != nil {
 		return
 	}

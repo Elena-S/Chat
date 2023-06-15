@@ -62,7 +62,7 @@ func (dbi *dbInstance) connect() {
 	for i := 0; i < 3; i++ {
 		err = db.Ping()
 		if errors.Is(err, syscall.ECONNREFUSED) {
-			time.Sleep(time.Second)
+			time.Sleep(time.Second * 2)
 			continue
 		} else {
 			break
