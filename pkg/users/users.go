@@ -44,7 +44,7 @@ func (user *User) Authorize(ctx context.Context, login, pwd string) (err error) 
 		return ErrWrongCredentials
 	}
 
-	secret, err := vault.ReadSecret(ctx, user.phone)
+	secret, err := vault.SecretStorage.ReadSecret(ctx, user.phone)
 	if err != nil {
 		return
 	}
@@ -118,7 +118,7 @@ func (user *User) createNX(ctx context.Context) (err error) {
 		return
 	}
 
-	err = vault.WriteSecret(ctx, user.phone, user.secret)
+	err = vault.SecretStorage.WriteSecret(ctx, user.phone, user.secret)
 	if err != nil {
 		return
 	}
@@ -219,4 +219,12 @@ func GetUserByID(userID uint) (*User, error) {
 		return nil, err
 	}
 	return user, nil
+}
+
+func SubToID(sub string) (uint, error) {
+	id, err := strconv.ParseUint(sub, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return uint(id), err
 }

@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/bits"
 	"net"
@@ -17,15 +18,13 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func RefreshTokens(rw http.ResponseWriter, r *http.Request) {
+func RefreshTokens(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if !(r.Method == "GET" || r.Method == "POST") {
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	var err error
+
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Refresh tokens request"))
-	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
 	accessToken, refreshToken, err := rh.RetrieveTokens()
 	if err != nil {
@@ -36,18 +35,16 @@ func RefreshTokens(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	rh.SetTokens(tokens)
+	return rh.SetTokens(tokens)
 }
 
-func UserAbout(rw http.ResponseWriter, r *http.Request) {
+func UserAbout(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if !(r.Method == "GET" || r.Method == "POST") {
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	var err error
+
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("User about request"))
-	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
 	userID, err := rh.GetUserID()
 	if err != nil {
@@ -57,18 +54,16 @@ func UserAbout(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	err = rh.WriteJSONContent(user)
+	return rh.WriteJSONContent(user)
 }
 
-func Search(rw http.ResponseWriter, r *http.Request) {
+func Search(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if !(r.Method == "GET" || r.Method == "POST") {
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	var err error
+
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Search request"))
-	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
 	userID, err := rh.GetUserID()
 	if err != nil {
@@ -83,18 +78,16 @@ func Search(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	rh.WriteJSONContent(chatArr)
+	return rh.WriteJSONContent(chatArr)
 }
 
-func CreateChat(rw http.ResponseWriter, r *http.Request) {
+func CreateChat(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if r.Method != "POST" {
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	var err error
+
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Create chat request"))
-	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
 	userID, err := rh.GetUserID()
 	if err != nil {
@@ -109,40 +102,37 @@ func CreateChat(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	rh.WriteJSONContent(chat)
+	return rh.WriteJSONContent(chat)
 }
 
-func ChatAbout(rw http.ResponseWriter, r *http.Request) {
-	var err error
+func ChatAbout(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Chat about request"))
-	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
 	userID, err := rh.GetUserID()
 	if err != nil {
 		return
 	}
-
 	if err = r.ParseForm(); err != nil {
 		return
 	}
 	chatID, err := strconv.ParseUint(r.Form.Get("chat_id"), 10, bits.UintSize)
+	if err != nil {
+		return
+	}
 	chat, err := chats.GetChatInfoByID(uint(chatID), userID)
 	if err != nil {
 		return
 	}
-	rh.WriteJSONContent(chat)
+	return rh.WriteJSONContent(chat)
 }
 
-func ChatList(rw http.ResponseWriter, r *http.Request) {
+func ChatList(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if !(r.Method == "GET" || r.Method == "POST") {
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	var err error
+
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Chat list request"))
-	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
 	userID, err := rh.GetUserID()
 	if err != nil {
@@ -153,18 +143,16 @@ func ChatList(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	rh.WriteJSONContent(chatArr)
+	return rh.WriteJSONContent(chatArr)
 }
 
-func ChatHistory(rw http.ResponseWriter, r *http.Request) {
+func ChatHistory(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if !(r.Method == "GET" || r.Method == "POST") {
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	var err error
+
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Chat history request"))
-	defer func() { rh.SetErrorStatus(ctxLogger, err) }()
 
 	userID, err := rh.GetUserID()
 	if err != nil {
@@ -190,20 +178,23 @@ func ChatHistory(rw http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	rh.WriteJSONContent(history)
+	return rh.WriteJSONContent(history)
 }
 
-func SendMessage(ws *websocket.Conn) {
+func WSConnection(ws *websocket.Conn) {
 	var err error
 	var userID uint
 	// var timer *time.Timer
 
-	ctxLogger := logger.NewLoggerWS(logger.Logger, ws.Request().RemoteAddr)
+	ctxLogger := logger.ChatLogger.WithEventField("ws connection").With("remote addr", ws.Request().RemoteAddr)
 	ctxLogger.Info("Opened")
 
 	defer func() {
 		if err != nil {
 			ctxLogger.Error(err.Error())
+		}
+		if data := recover(); data != nil {
+			ctxLogger.Error(fmt.Sprintf("handlers: panic raised when handle websocket connection, %v", data))
 		}
 		ctxLogger.Info("Closed")
 	}()
@@ -223,8 +214,7 @@ func SendMessage(ws *websocket.Conn) {
 
 	connNum, err := conns.Pool.Store(userID, ws)
 
-	ctxLogger.SetUserID(userID)
-	ctxLogger.SetNumConn(connNum)
+	ctxLogger = ctxLogger.With("user id", userID).With("connection number", connNum)
 
 	if err != nil {
 		return
@@ -257,8 +247,7 @@ func SendMessage(ws *websocket.Conn) {
 		message := new(chats.Message)
 		errMsg = json.Unmarshal(reply, message)
 		if errMsg != nil {
-			ctxLogger.SetMessage(reply)
-			ctxLogger.Error(errMsg.Error())
+			ctxLogger.With("message", reply).Error(errMsg.Error())
 			continue
 		}
 

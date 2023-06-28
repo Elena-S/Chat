@@ -7,11 +7,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +26,8 @@ const (
 
 const keyStateTemplate = "oAuth2:state:%s"
 
-var httpClient *http.Client
+var ErrExpiredToken = errors.New("auth: the access token is expired")
+
 var OAuthManager *oAuthManager
 var (
 	oAuth2Client     *ory.OAuth2Client
@@ -38,24 +37,24 @@ var (
 	publicOnce       sync.Once
 	publicClient     *ory.APIClient
 )
+var httpClient *http.Client
 
-type SetGetExCloser interface {
+type SetGetterEx interface {
 	SetEx(ctx context.Context, key string, value any, expiration time.Duration) error
 	GetEx(ctx context.Context, key string, expiration time.Duration) (string, error)
-	io.Closer
 }
 
 type Redirector interface {
 	Redirect(url string)
 }
 
-type ReseterTokens interface {
+type TokensReseter interface {
 	ResetTokens()
 }
 
 type ResetTokensRedirector interface {
 	Redirector
-	ReseterTokens
+	TokensReseter
 }
 
 func init() {
@@ -76,8 +75,7 @@ func init() {
 				AuthStyle: oauth2.AuthStyleInParams,
 			},
 		},
-		httpClient:    httpClient,
-		statesStorage: redis.Client(),
+		statesStorage: redis.Client,
 	}
 }
 
@@ -137,7 +135,7 @@ func oAuth2HydraClient() *ory.OAuth2Client {
 		oAuth2Client.SetTokenEndpointAuthMethod("client_secret_post")
 		oAuth2Client.SetTokenEndpointAuthSigningAlg("S256")
 		oAuth2Client.SetGrantTypes([]string{"authorization_code", "refresh_token"})
-		oAuth2Client.SetRedirectUris([]string{"https://localhost:8000/authentication/finish"})
+		oAuth2Client.SetRedirectUris([]string{"https://localhost:8000/authentication/finish", "https://localhost:8000/authentication/finish/silent"})
 		oAuth2Client.SetBackchannelLogoutUri("https://localhost:8000/authentication/logout")
 		oAuth2Client.SetBackchannelLogoutSessionRequired(true)
 		oAuth2Client.SetPostLogoutRedirectUris([]string{"https://localhost:8000"})
@@ -175,28 +173,27 @@ func (t *oAuthTokens) Expiry() time.Time {
 
 type oAuthManager struct {
 	config        oauth2.Config
-	httpClient    *http.Client
-	statesStorage SetGetExCloser
+	statesStorage SetGetterEx
 }
 
-func (m *oAuthManager) AuthRequest(ctx context.Context, r Redirector, opts ...oauth2.AuthCodeOption) error {
-	state, err := generateState()
-	if err != nil {
-		return err
-	}
-	if err = m.statesStorage.SetEx(ctx, fmt.Sprintf(keyStateTemplate, state), true, time.Minute*30); err != nil {
-		return err
-	}
-	r.Redirect(m.config.AuthCodeURL(state, opts...))
-	return nil
+func (m *oAuthManager) AuthRequest(ctx context.Context, r Redirector) error {
+	return m.authRequest(ctx, r, oauth2.SetAuthURLParam("redirect_uri", "https://localhost:8000/authentication/finish"))
 }
 
-func (m *oAuthManager) ExchangeForTokens(ctx context.Context, state string, code string) (TokenInfoRetriver, error) {
+func (m *oAuthManager) SilentAuthRequest(ctx context.Context, r Redirector) error {
+	params := []oauth2.AuthCodeOption{
+		oauth2.SetAuthURLParam("prompt", "none"),
+		oauth2.SetAuthURLParam("redirect_uri", "https://localhost:8000/authentication/finish/silent"),
+	}
+	return m.authRequest(ctx, r, params...)
+}
+
+func (m *oAuthManager) ExchangeForTokens(ctx context.Context, state string, code string, uri string) (TokenInfoRetriver, error) {
 	if _, err := m.statesStorage.GetEx(ctx, fmt.Sprintf(keyStateTemplate, state), time.Duration(0)); err != nil {
 		return nil, err
 	}
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, m.httpClient)
-	tokens, err := m.config.Exchange(ctx, code)
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
+	tokens, err := m.config.Exchange(ctx, code, oauth2.SetAuthURLParam("redirect_uri", uri))
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +257,7 @@ func (m *oAuthManager) LogoutRequest(ctx context.Context, logoutChallenge string
 	return
 }
 
-func (m *oAuthManager) RevokeToken(ctx context.Context, token string, r ReseterTokens) (err error) {
+func (m *oAuthManager) RevokeToken(ctx context.Context, token string, r TokensReseter) (err error) {
 	if token == "" {
 		return
 	}
@@ -283,7 +280,7 @@ func (m *oAuthManager) RefreshTokens(ctx context.Context, accessToken string, re
 		return nil, errors.New("auth: invalid access token")
 	}
 
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, m.httpClient)
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	tokens, err := m.config.Exchange(ctx, "", oauth2.SetAuthURLParam("grant_type", "refresh_token"), oauth2.SetAuthURLParam(tokenTypeRefresh, refreshToken))
 	if err != nil {
 		return nil, err
@@ -291,29 +288,51 @@ func (m *oAuthManager) RefreshTokens(ctx context.Context, accessToken string, re
 	return &oAuthTokens{tokens}, nil
 }
 
-func (m *oAuthManager) GetUserIDByToken(ctx context.Context, accessToken string) (uint, error) {
+func (m *oAuthManager) GetSubByToken(ctx context.Context, accessToken string) (string, error) {
+	tokenInfo, err := m.introspectAccessToken(ctx, accessToken)
+	if err != nil {
+		return "", err
+	}
+	return (*tokenInfo).GetSub(), nil
+}
+
+func (m *oAuthManager) AccessTokenIsActive(ctx context.Context, accessToken string) (bool, error) {
+	tokenInfo, err := m.introspectAccessToken(ctx, accessToken)
+	if err != nil {
+		if err == ErrExpiredToken {
+			return false, nil
+		} else {
+			return false, err
+		}
+	}
+	return tokenInfo != nil, nil
+}
+
+func (m *oAuthManager) introspectAccessToken(ctx context.Context, accessToken string) (*ory.IntrospectedOAuth2Token, error) {
 	tokenInfo, response, err := private().OAuth2Api.IntrospectOAuth2Token(ctx).Token(accessToken).Execute()
 	if err != nil {
-		return 0, fmt.Errorf("auth: an error occured when calling OAuth2Api.IntrospectOAuth2Token: %w\nfull HTTP response: %v", err, response)
+		return nil, fmt.Errorf("auth: an error occured when calling OAuth2Api.IntrospectOAuth2Token: %w\nfull HTTP response: %v", err, response)
 	}
-
 	if !tokenInfo.GetActive() {
-		return 0, errors.New("auth: the access token is expired")
+		return nil, ErrExpiredToken
 	}
 
 	if !(tokenInfo.GetTokenUse() == tokenTypeAccess && tokenInfo.GetClientId() == m.config.ClientID) {
-		return 0, errors.New("auth: invalid access token")
+		return nil, errors.New("auth: invalid access token")
 	}
-
-	id, err := strconv.ParseUint((*tokenInfo).GetSub(), 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return uint(id), nil
+	return tokenInfo, err
 }
 
-func (m *oAuthManager) Close() error {
-	return m.statesStorage.Close()
+func (m *oAuthManager) authRequest(ctx context.Context, r Redirector, opts ...oauth2.AuthCodeOption) error {
+	state, err := generateState()
+	if err != nil {
+		return err
+	}
+	if err = m.statesStorage.SetEx(ctx, fmt.Sprintf(keyStateTemplate, state), true, time.Minute*30); err != nil {
+		return err
+	}
+	r.Redirect(m.config.AuthCodeURL(state, opts...))
+	return nil
 }
 
 func generateState() (string, error) {

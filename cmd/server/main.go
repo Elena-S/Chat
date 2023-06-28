@@ -1,50 +1,36 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 
 	_ "github.com/Elena-S/Chat/db/migrations-go"
-	"github.com/Elena-S/Chat/pkg/auth"
-	"github.com/Elena-S/Chat/pkg/database"
+	"github.com/Elena-S/Chat/pkg/handlers"
 	"github.com/Elena-S/Chat/pkg/logger"
-	"github.com/Elena-S/Chat/pkg/routs"
-	"github.com/Elena-S/Chat/pkg/vault"
+	"github.com/Elena-S/Chat/pkg/srcmng"
 )
 
 func main() {
-	defer finish()
-
-	ctxLogger := logger.Logger.With(logger.EventField("Start of the server"))
-	ctxLogger.Info("")
-
-	db := database.DB()
-	vault.Client()
-
 	defer func() {
-		err := db.Close()
-		if err != nil {
-			ctxLogger.Error(err.Error())
+		ctxLogger := logger.ChatLogger.WithEventField("Stop of the server")
+		if data := recover(); data != nil {
+			ctxLogger.Error(fmt.Sprintf("main: panic raised, %v", data))
+		} else {
+			ctxLogger.Info("")
 		}
-		err = auth.OAuthManager.Close()
-		if err != nil {
-			ctxLogger.Error(err.Error())
-		}
+		logger.ChatLogger.Sync()
 	}()
 
-	routs.SetupRouts()
+	ctxLogger := logger.ChatLogger.WithEventField("Start of the server")
+	ctxLogger.Info("")
+
+	srcmng.SourceKeeper.MustLaunchAll()
+	defer srcmng.SourceKeeper.CloseAll()
+
+	handlers.SetupRouts()
 
 	//needs config file
 	if err := http.ListenAndServeTLS(":8000", "../../cert/certificate.crt", "../../cert/privateKey.key", nil); err != nil {
 		ctxLogger.Fatal(err.Error())
 	}
-}
-
-func finish() {
-	ctxLogger := logger.Logger.With(logger.EventField("Stop of the server"))
-	if data := recover(); data != nil {
-		logger.ErrorPanic(ctxLogger, data)
-	} else {
-		ctxLogger.Info("")
-	}
-	logger.Logger.Sync()
 }

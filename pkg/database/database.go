@@ -10,28 +10,34 @@ import (
 	"time"
 
 	"github.com/Elena-S/Chat/pkg/logger"
+	"github.com/Elena-S/Chat/pkg/srcmng"
 	"github.com/lib/pq"
 	"github.com/pressly/goose/v3"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
-var (
-	once sync.Once
-	dbi  *dbInstance
-)
+var dbi *dbInstance = new(dbInstance)
 
-func DB() *sql.DB {
-	once.Do(func() {
-		dbi = new(dbInstance)
-		dbi.connect()
-		dbi.init()
-	})
-	return dbi.db
+func init() {
+	srcmng.SourceKeeper.Add(dbi)
 }
 
 type dbInstance struct {
-	db *sql.DB
+	db   *sql.DB
+	once sync.Once
+}
+
+func (dbi *dbInstance) MustLaunch() {
+	dbi.once.Do(func() {
+		dbi.connect()
+		dbi.init()
+	})
+}
+
+func (dbi *dbInstance) Close() error {
+	if dbi.db == nil {
+		return nil
+	}
+	return dbi.db.Close()
 }
 
 func (dbi *dbInstance) connect() {
@@ -45,13 +51,7 @@ func (dbi *dbInstance) connect() {
 		os.Getenv("DB_NAME"),
 	)
 
-	ctxLogger := logger.Logger.With(
-		logger.EventField("connection to the database"),
-		zap.Field{
-			Key:    "data source name",
-			Type:   zapcore.StringType,
-			String: dsn,
-		})
+	ctxLogger := logger.ChatLogger.WithEventField("connection to the database").With("data source name", dsn)
 	ctxLogger.Info("Start")
 
 	db, err := sql.Open("postgres", dsn)
@@ -83,14 +83,7 @@ func (dbi *dbInstance) init() {
 	//needs config file
 	path := "../../db/migrations"
 
-	ctxLogger := logger.Logger.With(
-		logger.EventField("init of the database"),
-		zap.Field{
-			Key:    "path",
-			Type:   zapcore.StringType,
-			String: path,
-		})
-
+	ctxLogger := logger.ChatLogger.WithEventField("Init of the database").With("path", path)
 	ctxLogger.Info("Start")
 
 	if err := goose.SetDialect("postgres"); err != nil {
@@ -104,6 +97,11 @@ func (dbi *dbInstance) init() {
 	}
 
 	ctxLogger.Info("Finish")
+}
+
+func DB() *sql.DB {
+	dbi.MustLaunch()
+	return dbi.db
 }
 
 func SerializationFailureError(err error) bool {

@@ -715,20 +715,21 @@ class TokenRefresher {
 
     async refresh(skip = false) {
         if (!skip) {
+            const url = `${ reqURL }authentication/login/silent`;
+            const urlTarget = `${ reqURL }authentication/finish/silent/ok`;
+            const silentLoginFrame = window.frames["silent-login"];
             for (let attempt = 0; attempt < 3; attempt++) {
                 this.#refreshing = true;
                 while (this.#pendingRequests > 0) {
-                    await sleep(1000);
+                    await sleep(300);
                 }
-                let response;
-                try {
-                    response = await fetch(`${ reqURL }/authentication/refresh_tokens`); 
-                } catch (error) {
-                    console.log(error);
+                silentLoginFrame.location = url;
+                while (silentLoginFrame.location == url) {
+                    await sleep(300);
                 }
                 this.#refreshing = false; 
                 
-                if (response?.ok) {
+                if (silentLoginFrame.location == urlTarget) { 
                     break;    
                 }
 

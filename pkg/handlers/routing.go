@@ -10,70 +10,61 @@ import (
 	"github.com/Elena-S/Chat/pkg/users"
 )
 
-func Home(rw http.ResponseWriter, r *http.Request) {
+func Home(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if r.URL.Path == "/favicon.ico" {
 		return
 	}
 
-	var err error
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Home request"))
-	defer func() { rh.RedirectToErrorPage(ctxLogger, err) }()
 
-	if r.URL.Path == "/" {
-		if err = rh.RevokeToken(r.Context(), ctxLogger); err != nil {
-			return
-		}
-		err = auth.OAuthManager.AuthRequest(r.Context(), rh)
-	} else if _, err = rh.GetUserID(); err != nil {
-		rh.Redirect("/")
+	active, err := rh.TokenIsActive(r.Context())
+	if err != nil {
+		return
 	}
+	if active && r.URL.Path == "/" {
+		rh.Redirect("/chat")
+		return
+	}
+
+	return auth.OAuthManager.AuthRequest(r.Context(), rh)
 }
 
-func Error(rw http.ResponseWriter, r *http.Request) {
+func Error(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if !(r.Method == "GET" || r.Method == "POST") {
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	var err error
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Error request"))
-	defer func() {
-		if err != nil {
-			ctxLogger.Error(err.Error())
-		} else if data := recover(); data != nil {
-			logger.ErrorPanic(ctxLogger, data)
-		}
-	}()
-
 	rh.LoadPage("../../view/error/error.html")
+	return
 }
 
-func Login(rw http.ResponseWriter, r *http.Request) {
+func Login(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	switch r.Method {
 	case "GET":
-		loginGET(rw, r)
+		err = loginGET(rw, r, ctxLogger)
 	case "POST":
-		loginPOST(rw, r)
+		err = loginPOST(rw, r, ctxLogger)
 	default:
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 	}
+	return
 }
 
-func Logout(rw http.ResponseWriter, r *http.Request) {
+func SilentLogin(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
+	rh := NewResponseHelper(rw, r)
+	return auth.OAuthManager.SilentAuthRequest(r.Context(), rh)
+}
+
+func Logout(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if !(r.Method == "GET" || r.Method == "POST") {
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	var err error
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Logout GET request"))
-	defer func() { rh.RedirectToErrorPage(ctxLogger, err) }()
-
-	err = r.ParseForm()
-	if err != nil {
+	if err = r.ParseForm(); err != nil {
 		return
 	}
 
@@ -83,20 +74,19 @@ func Logout(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, refreshToken, err := rh.RetrieveTokens()
-	err = auth.OAuthManager.LogoutRequest(r.Context(), logoutChallenge, refreshToken, rh)
+	if !(err == nil || errors.Is(err, http.ErrNoCookie)) {
+		return
+	}
+	return auth.OAuthManager.LogoutRequest(r.Context(), logoutChallenge, refreshToken, rh)
 }
 
-func Consent(rw http.ResponseWriter, r *http.Request) {
+func Consent(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if !(r.Method == "GET" || r.Method == "POST") {
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	var err error
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Consent request"))
-	defer func() { rh.RedirectToErrorPage(ctxLogger, err) }()
-
 	if err = r.ParseForm(); err != nil {
 		return
 	}
@@ -107,71 +97,64 @@ func Consent(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = auth.OAuthManager.AcceptConsentRequest(r.Context(), consentChallenge, rh)
+	return auth.OAuthManager.AcceptConsentRequest(r.Context(), consentChallenge, rh)
 }
 
-func FinishAuth(rw http.ResponseWriter, r *http.Request) {
+func FinishAuth(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if !(r.Method == "GET" || r.Method == "POST") {
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	var err error
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Chat request"))
-	defer func() { rh.RedirectToErrorPage(ctxLogger, err) }()
-	if err = r.ParseForm(); err != nil {
-		return
-	}
-
-	state := strings.TrimSpace(r.Form.Get("state"))
-	if state == "" {
-		err = errors.New("handlers: the state is empty")
-		return
-	}
-
-	code := strings.TrimSpace(r.Form.Get("code"))
-	if code == "" {
-		err = errors.New("handlers: the authorization code is empty")
-		return
-	}
-
-	tokens, err := auth.OAuthManager.ExchangeForTokens(r.Context(), state, code)
-	if err != nil {
-		return
-	}
-
-	if err = rh.SetTokens(tokens); err != nil {
+	if err = fulfillAuth(rh); err != nil {
 		return
 	}
 
 	rh.Redirect("/chat")
+	return
 }
 
-func Chat(rw http.ResponseWriter, r *http.Request) {
+func FinishSilentAuth(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if !(r.Method == "GET" || r.Method == "POST") {
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	var err error
 	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Chat request"))
-	defer func() { rh.RedirectToErrorPage(ctxLogger, err) }()
+	if err = fulfillAuth(rh); err != nil {
+		return
+	}
 
+	rh.Redirect("/authentication/finish/silent/ok")
+	return
+}
+
+func SilentAuthOK(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
+	if !(r.Method == "GET" || r.Method == "POST") {
+		rw.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	rh := NewResponseHelper(rw, r)
+	return rh.LoadPage("../../view/silent_auth/ok.html")
+}
+
+func Chat(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
+	if !(r.Method == "GET" || r.Method == "POST") {
+		rw.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	rh := NewResponseHelper(rw, r)
 	if _, err = rh.GetUserID(); err != nil {
 		rh.Redirect("/")
 		return
 	}
-	err = rh.LoadPage("../../view/chat/chat.html")
+	return rh.LoadPage("../../view/chat/chat.html")
 }
 
-func loginGET(rw http.ResponseWriter, r *http.Request) {
-	var err error
-	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Login GET request"))
-	defer func() { rh.RedirectToErrorPage(ctxLogger, err) }()
-
+func loginGET(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if err = r.ParseForm(); err != nil {
 		return
 	}
@@ -182,19 +165,15 @@ func loginGET(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rh := NewResponseHelper(rw, r)
 	skipped, err := auth.OAuthManager.LoginRequest(r.Context(), loginChallenge, rh)
 	if skipped || err != nil {
 		return
 	}
-	err = rh.LoadPage("../../view/index.html")
+	return rh.LoadPage("../../view/index.html")
 }
 
-func loginPOST(rw http.ResponseWriter, r *http.Request) {
-	var err error
-	rh := NewResponseHelper(rw, r)
-	ctxLogger := logger.Logger.With(logger.EventField("Login POST request"))
-	defer func() { rh.RedirectToErrorPage(ctxLogger, err) }()
-
+func loginPOST(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
 	if err = r.ParseForm(); err != nil {
 		return
 	}
@@ -221,5 +200,35 @@ func loginPOST(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = auth.OAuthManager.AcceptLoginRequest(r.Context(), user.IDToString(), loginChallenge, remember, rh)
+	rh := NewResponseHelper(rw, r)
+	return auth.OAuthManager.AcceptLoginRequest(r.Context(), user.IDToString(), loginChallenge, remember, rh)
+}
+
+func fulfillAuth(rh *responseHelper) (err error) {
+	if err = rh.r.ParseForm(); err != nil {
+		return
+	}
+	state := strings.TrimSpace(rh.r.Form.Get("state"))
+	if state == "" {
+		err = errors.New("handlers: the state is empty")
+		return
+	}
+	code := strings.TrimSpace(rh.r.Form.Get("code"))
+	if code == "" {
+		err = errors.New("handlers: the authorization code is empty")
+		return
+	}
+	_, refreshToken, errToken := rh.RetrieveTokens()
+	if !(errToken == nil || errors.Is(errToken, http.ErrNoCookie)) {
+		err = errToken
+		return
+	}
+	if err = auth.OAuthManager.RevokeToken(rh.r.Context(), refreshToken, rh); err != nil {
+		return
+	}
+	tokens, err := auth.OAuthManager.ExchangeForTokens(rh.r.Context(), state, code, rh.FullURL())
+	if err != nil {
+		return
+	}
+	return rh.SetTokens(tokens)
 }

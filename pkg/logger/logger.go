@@ -8,7 +8,20 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var Logger *zap.Logger
+type Logger interface {
+	With(key string, value any) Logger
+	Info(msg string)
+	Error(msg string)
+	Panic(data any)
+	Fatal(msg string)
+	Sync()
+}
+
+type logger struct {
+	logger *zap.Logger
+}
+
+var ChatLogger *logger = new(logger)
 
 func init() {
 	config := zap.NewProductionEncoderConfig()
@@ -25,77 +38,61 @@ func init() {
 		zapcore.NewCore(fileEncoder, writer, zapcore.InfoLevel),
 	)
 
-	Logger = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
-
+	ChatLogger.logger = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
 }
 
-func EventField(event string) zapcore.Field {
-	return zapcore.Field{
-		Key:    "event",
-		Type:   zapcore.StringType,
-		String: event,
+func (l *logger) With(key string, value any) Logger {
+	var field zapcore.Field
+
+	switch value.(type) {
+	case uint:
+		field = zap.Uint(key, value.(uint))
+	case uint8:
+		field = zap.Uint8(key, value.(uint8))
+	case uint16:
+		field = zap.Uint16(key, value.(uint16))
+	case uint32:
+		field = zap.Uint32(key, value.(uint32))
+	case uint64:
+		field = zap.Uint64(key, value.(uint64))
+	case int:
+		field = zap.Int(key, value.(int))
+	case int8:
+		field = zap.Int8(key, value.(int8))
+	case int16:
+		field = zap.Int16(key, value.(int16))
+	case int32:
+		field = zap.Int32(key, value.(int32))
+	case int64:
+		field = zap.Int64(key, value.(int64))
+	case []byte:
+		field = zap.ByteString(key, value.([]byte))
+	default:
+		field = zap.String(key, fmt.Sprint(value))
 	}
+	return &logger{logger: l.logger.With(field)}
 }
 
-func ErrorPanic(ctxLogger *zap.Logger, data any) {
-	ctxLogger.Error("raised panic", zapcore.Field{
-		Key:    "data",
-		Type:   zapcore.StringType,
-		String: fmt.Sprint(data),
-	})
+func (l *logger) WithEventField(event string) Logger {
+	return l.With("event", event)
 }
 
-type loggerWS struct {
-	fieldUserID  zapcore.Field
-	fieldConnNum zapcore.Field
-	fieldMessage zapcore.Field
-	logger       *zap.Logger
+func (l *logger) Info(msg string) {
+	l.logger.Info(msg)
 }
 
-func NewLoggerWS(ctxLogger *zap.Logger, remoteAddr string) *loggerWS {
-	l := new(loggerWS)
-
-	l.fieldUserID = zapcore.Field{
-		Key:  "user id",
-		Type: zapcore.Uint64Type,
-	}
-	l.fieldConnNum = zapcore.Field{
-		Key:  "connection number",
-		Type: zapcore.Uint64Type,
-	}
-	l.fieldMessage = zapcore.Field{
-		Key:       "message",
-		Type:      zapcore.ByteStringType,
-		Interface: []byte{},
-	}
-	l.logger = ctxLogger.With(
-		EventField("ws connection"),
-		zapcore.Field{
-			Key:    "remote addr",
-			Type:   zapcore.StringType,
-			String: remoteAddr,
-		},
-	)
-
-	return l
+func (l *logger) Error(msg string) {
+	l.logger.Error(msg)
 }
 
-func (l *loggerWS) SetUserID(userID uint) {
-	l.fieldUserID.Integer = int64(userID)
+func (l *logger) Panic(data any) {
+	l.logger.Panic(fmt.Sprint(data))
 }
 
-func (l *loggerWS) SetNumConn(numConn uint) {
-	l.fieldConnNum.Integer = int64(numConn)
+func (l *logger) Fatal(msg string) {
+	l.logger.Fatal(msg)
 }
 
-func (l *loggerWS) SetMessage(msg []byte) {
-	l.fieldMessage.Interface = msg
-}
-
-func (l *loggerWS) Info(msg string) {
-	l.logger.Info(msg, l.fieldUserID, l.fieldConnNum, l.fieldMessage)
-}
-
-func (l *loggerWS) Error(msg string) {
-	l.logger.Error(msg, l.fieldUserID, l.fieldConnNum, l.fieldMessage)
+func (l *logger) Sync() {
+	l.logger.Sync()
 }

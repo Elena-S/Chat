@@ -1,49 +1,49 @@
 <!DOCTYPE html>
 <html>
-<head>
-    <meta charset="UTF-8">
-    <link type="text/css" rel="stylesheet" href="/view/style/common.css"/>
-    <link type="text/css" rel="stylesheet" href="/view/style/auth.css"/>
-    <script type="text/javascript" src="/view/scripts/auth.js"></script>
-</head>
-<body>
-    <div class="main-column">
-        <div class="app-name">
-            <h1>Blabber</h1>
-            <span>Let's chat!</span>
-        </div>
-        <div class="auth">
-            <div>
-                <div id="auth-options" class="auth-options">
-                    <div id="authorize" class="auth-option auth-option-active"><h2>Authorize</h2></div>
-                    <div id="register" class="auth-option auth-option-inactive"><h2>Register</h2></div>
-                </div>    
+    <head>
+        <meta charset="UTF-8">
+        <link type="text/css" rel="stylesheet" href="/view/style/common.css"/>
+        <link type="text/css" rel="stylesheet" href="/view/style/auth.css"/>
+        <script type="text/javascript" src="/view/scripts/auth.js"></script>
+    </head>
+    <body>
+        <div class="main-column">
+            <div class="app-name">
+                <h1>Blabber</h1>
+                <span>Let's chat!</span>
             </div>
-            <form class="auth-form" method="post" name="authentication">
-                <div class="auth-field">
-                    <label for="mob_number">Mob. number:</label>
-                    <input id="mob_number" name="login" type="tel" inputmode="tel" required placeholder="Mobile number including country code" pattern="^\+(?:[0-9] ?){6,14}[0-9]$">
+            <div class="auth">
+                <div>
+                    <div id="auth-options" class="auth-options">
+                        <div id="authorize" class="auth-option auth-option-active"><h2>Authorize</h2></div>
+                        <div id="register" class="auth-option auth-option-inactive"><h2>Register</h2></div>
+                    </div>    
                 </div>
-                <div class="auth-field invisible" data-optional>
-                    <label for="fist_name">First name:</label>
-                    <input id="fist_name" name="first_name" type="text">
-                </div>
-                <div class="auth-field invisible" data-optional>
-                    <label for="last_name">Last name:</label>
-                    <input id="last_name" name="last_name" type="text">
-                </div>
-                <div class="auth-field">
-                    <label for="password">Password:</label>
-                    <input id="password" name="pwd" type="password" autocomplete="off" required/>
-                </div>
-                <div class="auth-field">
-                    <label for="remember_me">Remember me:</label>
-                    <input id="remember_me" name="remember_me" type="checkbox"/>
-                </div>
-                <input id="registration" type="hidden" name="registration"/>
-                <button class="auth-submit" type="submit">Submit</button>
-            </form>
+                <form class="auth-form" method="post" name="authentication">
+                    <div class="auth-field">
+                        <label for="mob_number">Mob. number:</label>
+                        <input id="mob_number" name="login" type="tel" inputmode="tel" required placeholder="Mobile number including country code" pattern="^\+(?:[0-9] ?){6,14}[0-9]$">
+                    </div>
+                    <div class="auth-field invisible" data-optional>
+                        <label for="fist_name">First name:</label>
+                        <input id="fist_name" name="first_name" type="text">
+                    </div>
+                    <div class="auth-field invisible" data-optional>
+                        <label for="last_name">Last name:</label>
+                        <input id="last_name" name="last_name" type="text">
+                    </div>
+                    <div class="auth-field">
+                        <label for="password">Password:</label>
+                        <input id="password" name="pwd" type="password" autocomplete="off" required/>
+                    </div>
+                    <div class="auth-field">
+                        <label for="remember_me">Remember me:</label>
+                        <input id="remember_me" name="remember_me" type="checkbox"/>
+                    </div>
+                    <input id="registration" type="hidden" name="registration"/>
+                    <button class="auth-submit" type="submit">Submit</button>
+                </form>
+            </div>
         </div>
-    </div>
-</body>
+    </body>
 </html>

@@ -5,15 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/Elena-S/Chat/pkg/auth"
-	"github.com/Elena-S/Chat/pkg/logger"
 	"github.com/Elena-S/Chat/pkg/users"
-	"go.uber.org/zap"
 )
 
 const (
@@ -29,24 +26,36 @@ type requestHelper struct {
 	r *http.Request
 }
 
+func (rh *requestHelper) FullURL() string {
+	protocol := "https"
+	if rh.r.TLS == nil {
+		protocol = "http"
+	}
+	return fmt.Sprintf(`%s://%s%s`, protocol, rh.r.Host, rh.r.URL.Path)
+}
+
 func (rh *requestHelper) GetUserID() (uint, error) {
 	accessToken, _, err := rh.RetrieveTokens()
 	if err != nil {
 		return 0, err
 	}
-	return auth.OAuthManager.GetUserIDByToken(rh.r.Context(), accessToken)
+	sub, err := auth.OAuthManager.GetSubByToken(rh.r.Context(), accessToken)
+	if err != nil {
+		return 0, err
+	}
+	return users.SubToID(sub)
 }
 
 func (rh *requestHelper) RetrieveTokens() (string, string, error) {
 	cookie, err := rh.r.Cookie(cookieNameRefreshToken)
 	if err != nil {
-		return "", "", errors.New("handlers: missing a refresh token")
+		return "", "", fmt.Errorf("handlers: missing a refresh token, %w", err)
 	}
 	refreshToken := cookie.Value
 
 	cookie, err = rh.r.Cookie(cookieNameAccessToken)
 	if err != nil {
-		return "", "", errors.New("handlers: missing an access token")
+		return "", "", fmt.Errorf("handlers: missing an access token, %w", err)
 	}
 
 	return cookie.Value, refreshToken, err
@@ -62,7 +71,7 @@ type responseHelper struct {
 }
 
 func (rh *responseHelper) Redirect(url string) {
-	http.Redirect(rh.rw, rh.requestHelper.r, url, http.StatusSeeOther)
+	http.Redirect(rh.rw, rh.r, url, http.StatusSeeOther)
 }
 
 func (rh *responseHelper) LoadPage(file string) (err error) {
@@ -84,35 +93,6 @@ func (rh *responseHelper) WriteJSONContent(object any) (err error) {
 	return
 }
 
-func (rh *responseHelper) SetErrorStatus(ctxLogger *zap.Logger, err error) {
-	if data := recover(); data != nil {
-		rh.rw.WriteHeader(http.StatusInternalServerError)
-		logger.ErrorPanic(ctxLogger, data)
-	} else if err != nil {
-		switch err {
-		case users.ErrInvalidCredentials, users.ErrInvalidLoginFormat:
-			rh.rw.WriteHeader(http.StatusBadRequest)
-			io.WriteString(rh.rw, err.Error())
-		case users.ErrUsrExists, users.ErrWrongCredentials:
-			rh.rw.WriteHeader(http.StatusForbidden)
-			io.WriteString(rh.rw, err.Error())
-		default:
-			rh.rw.WriteHeader(http.StatusInternalServerError)
-		}
-		ctxLogger.Error(err.Error())
-	}
-}
-
-func (rh *responseHelper) RedirectToErrorPage(ctxLogger *zap.Logger, err error) {
-	if err != nil {
-		ctxLogger.Error(err.Error())
-		rh.Redirect(os.Getenv("URL_ERROR"))
-	} else if data := recover(); data != nil {
-		logger.ErrorPanic(ctxLogger, data)
-		rh.Redirect(os.Getenv("URL_ERROR"))
-	}
-}
-
 func (rh *responseHelper) ResetTokens() {
 	expiry := time.Now()
 	rh.rw.Header().Add("Set-Cookie", tokenCookieString(cookieNameAccessToken, "", expiry))
@@ -129,12 +109,15 @@ func (rh *responseHelper) SetTokens(tokens auth.TokenInfoRetriver) error {
 	return nil
 }
 
-func (rh *responseHelper) RevokeToken(ctx context.Context, ctxLogger *zap.Logger) (err error) {
-	_, refreshToken, errTokens := rh.RetrieveTokens()
-	if errTokens != nil {
-		ctxLogger.Error(errTokens.Error())
+func (rh *responseHelper) TokenIsActive(ctx context.Context) (bool, error) {
+	accessToken, _, err := rh.RetrieveTokens()
+	if err != nil {
+		if errors.Is(err, http.ErrNoCookie) {
+			return false, nil
+		}
+		return false, err
 	}
-	return auth.OAuthManager.RevokeToken(ctx, refreshToken, rh)
+	return auth.OAuthManager.AccessTokenIsActive(ctx, accessToken)
 }
 
 func tokenCookieString(name string, value string, expiry time.Time) string {
