@@ -41,32 +41,32 @@ func init() {
 	ChatLogger.logger = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
 }
 
-func (l *logger) With(key string, value any) Logger {
+func (l *logger) With(key string, data any) Logger {
 	var field zapcore.Field
 
-	switch value.(type) {
+	switch value := data.(type) {
 	case uint:
-		field = zap.Uint(key, value.(uint))
+		field = zap.Uint(key, value)
 	case uint8:
-		field = zap.Uint8(key, value.(uint8))
+		field = zap.Uint8(key, value)
 	case uint16:
-		field = zap.Uint16(key, value.(uint16))
+		field = zap.Uint16(key, value)
 	case uint32:
-		field = zap.Uint32(key, value.(uint32))
+		field = zap.Uint32(key, value)
 	case uint64:
-		field = zap.Uint64(key, value.(uint64))
+		field = zap.Uint64(key, value)
 	case int:
-		field = zap.Int(key, value.(int))
+		field = zap.Int(key, value)
 	case int8:
-		field = zap.Int8(key, value.(int8))
+		field = zap.Int8(key, value)
 	case int16:
-		field = zap.Int16(key, value.(int16))
+		field = zap.Int16(key, value)
 	case int32:
-		field = zap.Int32(key, value.(int32))
+		field = zap.Int32(key, value)
 	case int64:
-		field = zap.Int64(key, value.(int64))
+		field = zap.Int64(key, value)
 	case []byte:
-		field = zap.ByteString(key, value.([]byte))
+		field = zap.ByteString(key, value)
 	default:
 		field = zap.String(key, fmt.Sprint(value))
 	}

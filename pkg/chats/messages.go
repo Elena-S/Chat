@@ -30,13 +30,13 @@ func (message *Message) Register(senderID uint) (err error) {
 		return
 	}
 	if message.Text == "" {
-		err = errors.New("chats: empty message")
+		err = errors.New("chats: got empty message")
 		return
 	}
 
 	sender, err := users.GetUserByID(senderID)
 	if err != nil {
-		err = fmt.Errorf("chats: the sender with the given id %d is not exists", senderID)
+		err = fmt.Errorf("chats: a sender with the given id %d is not exists", senderID)
 		return
 	}
 	message.AuthorID = senderID

@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Elena-S/Chat/pkg/redis"
@@ -112,7 +113,18 @@ func oAuth2HydraClient() *ory.OAuth2Client {
 
 		ctx := context.Background()
 
-		list, response, err := private().OAuth2Api.ListOAuth2Clients(ctx).ClientName(clientName).Execute()
+		var list []ory.OAuth2Client
+		var response *http.Response
+		var err error
+		for i := 0; i < 3; i++ {
+			list, response, err = private().OAuth2Api.ListOAuth2Clients(ctx).ClientName(clientName).Execute()
+			if errors.Is(err, syscall.ECONNREFUSED) {
+				time.Sleep(time.Second * 2)
+				continue
+			} else {
+				break
+			}
+		}
 		if err != nil {
 			log.Fatalf("auth: an error occured when calling OAuth2Api.ListOAuth2Clients: %v\nfull HTTP response: %v\n", err, response)
 		}

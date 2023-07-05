@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -54,7 +55,12 @@ func handlerWithChatLogger(handler func(rw http.ResponseWriter, r *http.Request,
 			if data == nil {
 				return
 			}
-			err := fmt.Errorf("handlers: panic raised when executing %s, data %v", event, data)
+			var err error
+			if dataValue, ok := data.(error); ok {
+				err = fmt.Errorf("handlers: panic raised when executing %s, data %w", event, dataValue)
+			} else {
+				err = fmt.Errorf("handlers: panic raised when executing %s, data %v", event, dataValue)
+			}
 			ctxLogger.Error(err.Error())
 			errorHandler(rw, r, err)
 		}()
@@ -72,14 +78,12 @@ func redirectToErrorPage(rw http.ResponseWriter, r *http.Request, err error) {
 }
 
 func writeErrorHeader(rw http.ResponseWriter, r *http.Request, err error) {
-	var statusCode int
-	switch err {
-	case users.ErrInvalidCredentials, users.ErrInvalidLoginFormat:
+	statusCode := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, users.ErrInvalidCredentials), errors.Is(err, users.ErrInvalidLoginFormat):
 		statusCode = http.StatusBadRequest
-	case users.ErrUsrExists, users.ErrWrongCredentials:
+	case errors.Is(err, users.ErrUsrExists), errors.Is(err, users.ErrWrongCredentials):
 		statusCode = http.StatusForbidden
-	default:
-		statusCode = http.StatusInternalServerError
 	}
 	http.Error(rw, err.Error(), statusCode)
 }

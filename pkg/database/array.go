@@ -57,7 +57,7 @@ func (a *UintArray) scanBytes(src []byte) error {
 			if pv, err := strconv.ParseUint(string(v), 10, 64); err == nil {
 				b[i] = uint(pv)
 			} else {
-				return fmt.Errorf("database: parsing array element index %d: %v", i, err)
+				return fmt.Errorf("database: parsing array element index %d: %w", i, err)
 			}
 		}
 		*a = b

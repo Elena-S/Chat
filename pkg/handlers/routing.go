@@ -34,10 +34,7 @@ func Error(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (er
 		rw.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-
-	rh := NewResponseHelper(rw, r)
-	rh.LoadPage("../../view/error/error.html")
-	return
+	return NewResponseHelper(rw, r).LoadPage("../../view/error/error.html")
 }
 
 func Login(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error) {
