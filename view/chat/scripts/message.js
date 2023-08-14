@@ -12,7 +12,7 @@ class ChatView {
     async #onMessage(event) {
         const rawMessage = JSON.parse(event.data);
         let chat = this._chatList.get(rawMessage.ChatID);
-        if (rawMessage.Service) {
+        if (rawMessage.Type == Message.messageTypes.Typing.id) {
             if (!chat || chat.id() != this.#currentChat.id() || user.id() == rawMessage.AuthorID) {
                 return;
             } 
@@ -27,6 +27,9 @@ class ChatView {
                 })
             } else {
                 const message = chat.addMessage(rawMessage);
+                if (!message) {
+                    return;
+                }
                 
                 if (chat.id() == this.#currentChat.id()) {
                     this.#displayMessageInHistory(this._historyElement.innerHTML + message.html());
@@ -38,17 +41,22 @@ class ChatView {
         }
     }
 
-    async #onSend(event, text) {
+    async #onSend(event, type) {
         let chat = this.#currentChat;
  
         if (!chat) {
             return;
         }
 
-        let isService = !!(text);
+        let text = '';
+
+        const isService = (type && type != Message.messageTypes.Ordinary);
         if (!isService) {
             text = this._inputElement.value;
             this._inputElement.value = '';
+            type = Message.messageTypes.Ordinary;
+        } else {
+            text = type.text;
         }
 
         if (!text) {
@@ -68,7 +76,7 @@ class ChatView {
             await this.newWebSocketConn(); 
         }
         
-        chat.sendMessage(this.#ws, text, isService);
+        chat.sendMessage(this.#ws, text, type.id);
     }
 
     #onKeyDown(event) {
@@ -79,7 +87,7 @@ class ChatView {
     }
     
     #onTypingText = flushAndThrottle(async (event) => {
-        this.#onSend(event, 'typing text...');
+        this.#onSend(event, Message.messageTypes.Typing);
     }, 1000, true);
 
     #notify = function() {
@@ -424,8 +432,8 @@ class Chat {
         return this.#lastMessageText;
     }
 
-    sendMessage(ws, text, service = false) {
-        const message = new Message({ ChatID: this.id(), Text: text, Service: service });
+    sendMessage(ws, text, type) {
+        const message = new Message({ ChatID: this.id(), Text: text, Type: type});
         ws.send(JSON.stringify(message.toJSON()));
     }
 
@@ -433,12 +441,14 @@ class Chat {
         if (!(message instanceof Message)) {
             message = new Message(message);
         }
-        this._history.add(message);
-        if (this.#lastMessageDate <= message.date()) {
-            this.#lastMessageDate = message.date();
-            this.#lastMessageText = message.text();
+        if (this._history.add(message)) {
+            if (this.#lastMessageDate <= message.date()) {
+                this.#lastMessageDate = message.date();
+                this.#lastMessageText = message.text();
+            }
+            return message;
         }
-        return message;
+        return undefined;        
     }
 
     messages() {
@@ -474,24 +484,28 @@ class Chat {
 }
 
 class History {
+    #firstID;
     #lastID;
     #messages;
     #gotEndOfHistory;
 
     #insert(message, i) {
-        const context = this;
-        const f = function(message, i) { context.#messages[i] = message };
-        this.#modify(f, message, i);
-    }
-
-    #modify(func, message, ...args) {
         if (!(message instanceof Message)) { 
             message = new Message(message);
         }
+        const context = this;
+        const f = function(message, i) { context.#messages[i] = message };
+        this.#modify(f, message, i);
+        return true;
+    }
 
+    #modify(func, message, ...args) {
         func(message, ...args);
 
-        if (!this.#lastID || this.#lastID > message.id()) {
+        if (!this.#firstID || this.#firstID > message.id()) {
+            this.#firstID = message.id();
+        }
+        if (!this.#lastID || this.#lastID < message.id()) {
             this.#lastID = message.id();
         }
     }
@@ -500,7 +514,7 @@ class History {
         if (!this._chatID) {
             return;
         }
-        await fetchJSONAsync(`chat/history?chat_id=${ this._chatID }&message_id=${ this.#lastID }`, (history) => {
+        await fetchJSONAsync(`chat/history?chat_id=${ this._chatID }&message_id=${ this.#firstID }`, (history) => {
             if (!history.LastID) {
                 return;
             }
@@ -508,18 +522,21 @@ class History {
             this.#messages = new Array(oldArr.length + history.Messages.length);
             let j = 0;
             for (let i = history.Messages.length-1; i >= 0; i--) {
-                this.#insert(history.Messages[i], j);
-                j++
+                if (this.#insert(history.Messages[i], j)) {
+                    j++;
+                }
             }
             for (let i = 0; i < oldArr.length; i++) {
                 this.#messages[j] = oldArr[i];
                 j++;
             }
+            this.#messages = this.#messages.slice(0, j);
         })
     }
 
     constructor(chatID) {
         this._chatID = chatID;
+        this.#firstID = 0;
         this.#lastID = 0;
         this.#messages = [];
         this.#gotEndOfHistory = false;
@@ -530,9 +547,18 @@ class History {
     }
 
     add(message) {
+        if (!(message instanceof Message)) { 
+            message = new Message(message);
+        }
+        if (this.#lastID >= message.id()) {
+            return false;
+        }
         const context = this;
-        const f = function(message) { context.#messages.push(message) };
+        const f = function(message) {
+            context.#messages.push(message);
+        };
         this.#modify(f, message);
+        return true;
     }
 
     async update() {
@@ -558,8 +584,13 @@ class Message {
         this._authorID = data.AuthorID || 0;
         this.#text = data.Text || '';
         this._date = (data.Date) ? new Date(Date.parse(data.Date)) : new Date(1, 1, 1);
-        this._service = data.Service || false;
+        this._type = data.Type || Message.messageTypes.Ordinary.id;
     }
+
+    static messageTypes = {
+        'Ordinary': {id: 1, text: ''},
+        'Typing': {id: 2, text: 'typing text...'}
+    };
 
     id() {
         return this._id;
@@ -595,7 +626,7 @@ class Message {
         return {
             ChatID: this._chatID,
             Text: this.#text,
-            Service: this._service
+            Type: this._type
         };
     }
 }

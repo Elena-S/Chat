@@ -5,19 +5,25 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"sync"
 
+	"github.com/Elena-S/Chat/pkg/logger"
 	"github.com/Elena-S/Chat/pkg/srcmng"
 	vault "github.com/hashicorp/vault/api"
 	auth "github.com/hashicorp/vault/api/auth/approle"
 )
 
+var _ srcmng.SourceManager = (*storage)(nil)
+
 var ErrInvalidFormat = errors.New("vault: invalid format of the storaged secret")
 
 const secretPath = "kv/chat/user_profiles"
-const envAppRoleID = "APPROLE_ROLE_ID"
+
+var SecretStorage *storage = &storage{
+	chLoggedIn: make(chan struct{}),
+	chClosed:   make(chan struct{}),
+}
 
 type Secret struct {
 	Salt         []byte
@@ -33,15 +39,6 @@ type storage struct {
 	chLoggedIn   chan struct{}
 }
 
-var SecretStorage *storage = &storage{
-	chLoggedIn: make(chan struct{}),
-	chClosed:   make(chan struct{}),
-}
-
-func init() {
-	srcmng.SourceKeeper.Add(SecretStorage)
-}
-
 func (s *storage) MustLaunch() {
 	s.onceLaunch.Do(func() {
 		config := vault.DefaultConfig()
@@ -51,7 +48,7 @@ func (s *storage) MustLaunch() {
 		var err error
 		s.client, err = vault.NewClient(config)
 		if err != nil {
-			log.Fatal(err)
+			logger.ChatLogger.Fatal(err.Error())
 		}
 		go s.renewToken()
 		<-s.chLoggedIn
@@ -120,19 +117,19 @@ func (s *storage) renewToken() {
 	for {
 		vaultLoginResp, err := s.login()
 		if err != nil {
-			log.Fatalf("vault: %v", err.Error())
+			logger.ChatLogger.Fatal(fmt.Sprintf("vault: %v", err.Error()))
 		}
 
 		s.onceLoggedIn.Do(func() { close(s.chLoggedIn) })
 
 		if !vaultLoginResp.Auth.Renewable {
-			log.Printf("vault: token is not configured to be renewable.")
+			logger.ChatLogger.Info("vault: token is not configured to be renewable.")
 			break
 		}
 
 		err, stop := s.manageTokenLifecycle(vaultLoginResp)
 		if err != nil {
-			log.Fatalf("vault: unable to start managing token lifecycle: %v", err)
+			logger.ChatLogger.Fatal(fmt.Sprintf("vault: unable to start managing token lifecycle: %v", err))
 		}
 		if stop {
 			break
@@ -141,6 +138,7 @@ func (s *storage) renewToken() {
 }
 
 func (s *storage) login() (*vault.Secret, error) {
+	const envAppRoleID = "APPROLE_ROLE_ID"
 	roleID := os.Getenv(envAppRoleID)
 	if roleID == "" {
 		return nil, fmt.Errorf("vault: no role ID was provided in %s env var", envAppRoleID)
@@ -184,13 +182,13 @@ func (s *storage) manageTokenLifecycle(token *vault.Secret) (error, bool) {
 		select {
 		case err := <-watcher.DoneCh():
 			if err != nil {
-				log.Printf("vault: failed to renew token: %v. Re-attempting login.", err)
+				logger.ChatLogger.Info(fmt.Sprintf("vault: failed to renew token: %v. Re-attempting login.", err))
 				return nil, false
 			}
-			log.Printf("vault: token can no longer be renewed. Re-attempting login.")
+			logger.ChatLogger.Info("vault: token can no longer be renewed. Re-attempting login.")
 			return nil, false
 		case renewal := <-watcher.RenewCh():
-			log.Printf("vault: successfully renewed: %#v", renewal)
+			logger.ChatLogger.Info(fmt.Sprintf("vault: successfully renewed: %#v", renewal))
 		case <-s.chClosed:
 			return nil, true
 		}

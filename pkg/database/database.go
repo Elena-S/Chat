@@ -15,11 +15,8 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-var dbi *dbInstance = new(dbInstance)
-
-func init() {
-	srcmng.SourceKeeper.Add(dbi)
-}
+var _ srcmng.SourceManager = (*dbInstance)(nil)
+var DBI *dbInstance = new(dbInstance)
 
 type dbInstance struct {
 	db   *sql.DB
@@ -100,8 +97,8 @@ func (dbi *dbInstance) init() {
 }
 
 func DB() *sql.DB {
-	dbi.MustLaunch()
-	return dbi.db
+	DBI.MustLaunch()
+	return DBI.db
 }
 
 func SerializationFailureError(err error) bool {

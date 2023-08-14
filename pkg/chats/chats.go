@@ -8,14 +8,11 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"log"
 	"strings"
 	"time"
 
-	"github.com/Elena-S/Chat/pkg/conns"
 	"github.com/Elena-S/Chat/pkg/database"
 	"golang.org/x/exp/slices"
-	"golang.org/x/net/websocket"
 )
 
 const minContactsCount = 2
@@ -54,6 +51,7 @@ func (chat *Chat) Register(ctx context.Context, r io.Reader, ownerID uint) (err 
 		err = errors.New("chats: got non zero chat identifier")
 		return
 	}
+
 	if len(chat.Contacts) < minContactsCount {
 		err = errors.New("chats: not enought contacts to create chat")
 		return
@@ -68,35 +66,15 @@ retry:
 }
 
 func (chat *Chat) SendMessage(message Message) (err error) {
-	err = chat.refreshContacts()
-	if err != nil {
-		log.Println("chats: ", err)
+	if err = chat.refreshContacts(); err != nil {
 		return
 	}
 	if len(chat.Contacts) < minContactsCount {
-		err = fmt.Errorf("chats: the number of receivers should be at least %d", minContactsCount)
-		log.Println("chats: ", err)
-		return
+		return fmt.Errorf("chats: number of receivers should be at least %d", minContactsCount)
 	}
-
-	for _, recieverID := range chat.Contacts {
-		cs, err := conns.Pool.Get(recieverID)
-		if err != nil {
-			log.Println("chats: ", err)
-			continue
-		}
-
-		cs.Range(func(key any, value any) bool {
-			ws, ok := key.(*websocket.Conn)
-			if !ok {
-				return true
-			}
-			err = websocket.JSON.Send(ws, message)
-			if err != nil {
-				log.Println("chats: ", err)
-			}
-			return true
-		})
+	err = message.Share(chat.Contacts)
+	if err != nil {
+		return fmt.Errorf("chats: one or more errors occurred when sending a message, %w", err)
 	}
 	return
 }

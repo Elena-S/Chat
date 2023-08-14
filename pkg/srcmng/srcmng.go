@@ -14,14 +14,11 @@ type SourceManager interface {
 
 type sourceKeeper struct {
 	sources []SourceManager
-	mu      sync.Mutex
 }
 
 var SourceKeeper sourceKeeper
 
 func (s *sourceKeeper) Add(source SourceManager) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.sources = append(s.sources, source)
 }
 

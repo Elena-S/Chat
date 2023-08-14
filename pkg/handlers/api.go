@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Elena-S/Chat/pkg/auth"
 	"github.com/Elena-S/Chat/pkg/chats"
@@ -184,7 +185,7 @@ func ChatHistory(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logge
 func WSConnection(ws *websocket.Conn) {
 	var err error
 	var userID uint
-	// var timer *time.Timer
+	var timer *time.Timer
 
 	ctxLogger := logger.ChatLogger.WithEventField("ws connection").With("remote addr", ws.Request().RemoteAddr)
 	ctxLogger.Info("Opened")
@@ -198,16 +199,17 @@ func WSConnection(ws *websocket.Conn) {
 		}
 		ctxLogger.Info("Closed")
 	}()
+
 	defer func() {
-		// if timer != nil {
-		// 	timer.Reset(time.Duration(0))
-		// }
-		err = conns.Pool.CloseAndDelete(userID, ws)
+		if timer != nil && timer.Stop() {
+			timer.Reset(0)
+		}
+		if err := conns.Pool.CloseAndDelete(userID, ws); err != nil {
+			ctxLogger.Error(err.Error())
+		}
 	}()
 
-	rh := NewRequestHelper(ws.Request())
-
-	userID, err = rh.GetUserID()
+	userID, err = NewRequestHelper(ws.Request()).GetUserID()
 	if err != nil {
 		return
 	}
@@ -220,18 +222,19 @@ func WSConnection(ws *websocket.Conn) {
 		return
 	}
 
-	// duration := time.Hour * 12
-	// timer = time.NewTimer(duration)
+	duration := time.Minute * 30
+	timer = time.NewTimer(duration)
 
-	// go func() {
-	// 	<-timer.C
-	// 	conns.Pool.CloseAndDelete(userID, ws)
-	// }()
+	go func() {
+		<-timer.C
+		if err := ws.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			ctxLogger.Error(err.Error())
+		}
+	}()
 
 	for {
 		var reply []byte
 		errMsg := websocket.Message.Receive(ws, &reply)
-
 		// message := new(chats.Message)
 		// errMsg := websocket.JSON.Receive(ws, message)
 		if errMsg != nil {
@@ -242,6 +245,9 @@ func WSConnection(ws *websocket.Conn) {
 				ctxLogger.Error(errMsg.Error())
 				continue
 			}
+		}
+		if timer.Stop() {
+			timer.Reset(duration)
 		}
 
 		message := new(chats.Message)
@@ -262,7 +268,5 @@ func WSConnection(ws *websocket.Conn) {
 			ctxLogger.Error(errMsg.Error())
 			continue
 		}
-
-		// timer.Reset(duration)
 	}
 }

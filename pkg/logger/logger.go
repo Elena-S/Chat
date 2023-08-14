@@ -14,7 +14,7 @@ type Logger interface {
 	Error(msg string)
 	Panic(data any)
 	Fatal(msg string)
-	Sync()
+	Sync() error
 }
 
 type logger struct {
@@ -93,6 +93,6 @@ func (l *logger) Fatal(msg string) {
 	l.logger.Fatal(msg)
 }
 
-func (l *logger) Sync() {
-	l.logger.Sync()
+func (l *logger) Sync() error {
+	return l.logger.Sync()
 }

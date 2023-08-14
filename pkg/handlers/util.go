@@ -43,7 +43,7 @@ func (rh *requestHelper) GetUserID() (uint, error) {
 	if err != nil {
 		return 0, err
 	}
-	return users.SubToID(sub)
+	return users.StringToID(sub)
 }
 
 func (rh *requestHelper) RetrieveTokens() (string, string, error) {

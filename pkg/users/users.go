@@ -94,7 +94,7 @@ func (user *User) ID() uint {
 }
 
 func (user *User) IDToString() string {
-	return strconv.FormatUint(uint64(user.id), 10)
+	return IDToString(user.id)
 }
 
 func (user *User) Login() string {
@@ -165,7 +165,7 @@ func (user *User) MarshalJSON() (data []byte, err error) {
 	if err != nil {
 		return
 	}
-	_, err = buf.WriteString(strconv.FormatUint(uint64(user.id), 10))
+	_, err = buf.WriteString(user.IDToString())
 	if err != nil {
 		return
 	}
@@ -221,10 +221,14 @@ func GetUserByID(userID uint) (*User, error) {
 	return user, nil
 }
 
-func SubToID(sub string) (uint, error) {
+func StringToID(sub string) (uint, error) {
 	id, err := strconv.ParseUint(sub, 10, 64)
 	if err != nil {
 		return 0, err
 	}
 	return uint(id), err
+}
+
+func IDToString(ID uint) string {
+	return strconv.FormatUint(uint64(ID), 10)
 }

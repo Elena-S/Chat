@@ -1,9 +1,14 @@
 package conns
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"net"
 	"sync"
 
+	"github.com/Elena-S/Chat/pkg/broker"
+	"github.com/Elena-S/Chat/pkg/users"
 	"golang.org/x/net/websocket"
 )
 
@@ -15,23 +20,29 @@ type manager struct {
 	mu         sync.Mutex
 }
 
-type connection struct {
-	// ws  *websocket.Conn
-	num uint
+type payload struct {
+	num    uint
+	values map[any]any
 }
 
 func (m *manager) Store(userID uint, ws *websocket.Conn) (uint, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	cs, _, err := m.retrieveConns(userID)
 	if err != nil {
 		return 0, err
 	}
+
 	m.currentNum++
-	conn := connection{num: m.currentNum}
+	conn := payload{num: m.currentNum, values: map[any]any{}}
+
+	err = broker.Subscribe(context.TODO(), users.IDToString(userID), ws, conn.values)
+
 	cs.Store(ws, conn)
 	m.pool.Store(userID, cs)
-	return conn.num, nil
+
+	return conn.num, err
 }
 
 func (m *manager) Get(userID uint) (cs *sync.Map, err error) {
@@ -46,7 +57,10 @@ func (m *manager) Get(userID uint) (cs *sync.Map, err error) {
 }
 
 func (m *manager) CloseAndDelete(userID uint, ws *websocket.Conn) (err error) {
-	ws.Close()
+	err = ws.Close()
+	if err != nil && !errors.Is(err, net.ErrClosed) {
+		return
+	}
 	if userID == 0 {
 		return
 	}
@@ -55,11 +69,30 @@ func (m *manager) CloseAndDelete(userID uint, ws *websocket.Conn) (err error) {
 	defer m.mu.Unlock()
 	cs, ok, err := m.retrieveConns(userID)
 	if err != nil || !ok {
-		return err
+		return
 	}
-	cs.Delete(ws)
-	m.pool.Store(userID, cs)
+	data, ok := cs.LoadAndDelete(ws)
+	if !ok {
+		err = errors.New("conns: a websocket connection did not register")
+		return
+	}
+	conn, ok := data.(payload)
+	if !ok {
+		err = fmt.Errorf("conns: payload data does not match type %T, got type %T", payload{}, data)
+		return
+	}
+	err = broker.Unsubscribe(context.TODO(), users.IDToString(userID), conn.values)
 
+	empty := true
+	cs.Range(func(key any, value any) bool {
+		empty = false
+		return false
+	})
+	if !empty {
+		m.pool.Store(userID, cs)
+		return
+	}
+	m.pool.Delete(userID)
 	return
 }
 
@@ -67,7 +100,7 @@ func (m *manager) retrieveConns(userID uint) (cs *sync.Map, ok bool, err error) 
 	value, ok := m.pool.Load(userID)
 	if ok {
 		if cs, ok = value.(*sync.Map); !ok {
-			return cs, ok, errors.New("conns: got wrong type")
+			return cs, ok, fmt.Errorf("conns: loaded data does not match type %T, got type %T", cs, value)
 		}
 	} else {
 		cs = new(sync.Map)
