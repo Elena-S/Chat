@@ -33,7 +33,7 @@ services:
     networks:
       chat_net: {}
   vault:
-    image: hashicorp/vault:1.13.2
+    image: hashicorp/vault:1.14
     depends_on:
       - vault-autounseal
     cap_add:
@@ -55,7 +55,7 @@ services:
       chat_net: {}
     command: sh /vault/config/script.sh
   vault-autounseal:
-    image: hashicorp/vault:1.13.2
+    image: hashicorp/vault:1.14
     cap_add:
       - IPC_LOCK
     environment:
@@ -76,7 +76,7 @@ services:
       chat_net: {}
     command: sh /vault/config/script.sh
   hydra:
-    image: oryd/hydra:v2.1.2
+    image: oryd/hydra:v2.2
     ports:
       - "4444:4444"
       - "4445:4445"

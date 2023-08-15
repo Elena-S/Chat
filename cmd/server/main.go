@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	_ "net/http/pprof"
 
 	_ "github.com/Elena-S/Chat/db/migrations-go"
 	"github.com/Elena-S/Chat/pkg/broker"
