@@ -9,6 +9,7 @@ services:
       - hydra
       - vault
       - redis
+      - kafka
     env_file:
       - .env
     ports:
