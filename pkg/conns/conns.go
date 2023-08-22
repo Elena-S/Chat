@@ -34,15 +34,19 @@ func (m *manager) Store(userID uint, ws *websocket.Conn) (uint, error) {
 		return 0, err
 	}
 
-	m.currentNum++
-	conn := payload{num: m.currentNum, values: map[any]any{}}
+	values := map[any]any{}
+	err = broker.Subscribe(context.TODO(), users.IDToString(userID), ws, values)
+	if err != nil {
+		return 0, err
+	}
 
-	err = broker.Subscribe(context.TODO(), users.IDToString(userID), ws, conn.values)
+	m.currentNum++
+	conn := payload{num: m.currentNum, values: values}
 
 	cs.Store(ws, conn)
 	m.pool.Store(userID, cs)
 
-	return conn.num, err
+	return conn.num, nil
 }
 
 func (m *manager) Get(userID uint) (cs *sync.Map, err error) {
@@ -78,11 +82,9 @@ func (m *manager) CloseAndDelete(userID uint, ws *websocket.Conn) (err error) {
 	}
 	conn, ok := data.(payload)
 	if !ok {
-		err = fmt.Errorf("conns: payload data does not match type %T, got type %T", payload{}, data)
+		err = fmt.Errorf("conns: payload data does not match type %T, got type %T", conn, data)
 		return
 	}
-	err = broker.Unsubscribe(context.TODO(), users.IDToString(userID), conn.values)
-
 	empty := true
 	cs.Range(func(key any, value any) bool {
 		empty = false
@@ -93,7 +95,7 @@ func (m *manager) CloseAndDelete(userID uint, ws *websocket.Conn) (err error) {
 		return
 	}
 	m.pool.Delete(userID)
-	return
+	return broker.Unsubscribe(context.TODO(), users.IDToString(userID), conn.values)
 }
 
 func (m *manager) retrieveConns(userID uint) (cs *sync.Map, ok bool, err error) {

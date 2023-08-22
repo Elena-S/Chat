@@ -2,7 +2,6 @@ package kafka
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -52,7 +51,7 @@ func (p *producer) MustLaunch() {
 			"client.id":         clientName,
 		})
 		if err != nil {
-			logger.ChatLogger.Fatal(err.Error())
+			logger.ChatLogger.WithEventField("kafka producer creation").Error(err.Error())
 		}
 		Client.producer.instance = pr
 	})
@@ -79,7 +78,7 @@ func (kc *kafkaClient) SetMinStorageDuration(d time.Duration) {
 	kc.minStorageDuration = strconv.FormatUint(uint64(d/time.Millisecond), 10)
 }
 
-func (kc *kafkaClient) Subscribe(ctx context.Context, topic string, values map[any]any) error {
+func (kc *kafkaClient) Subscribe(ctx context.Context, topic string, payload map[any]any) error {
 	id := fmt.Sprintf("%s_%s", clientName, strconv.FormatUint(atomic.AddUint64(&kc.cunsumersNum, 1), 10))
 	consumer, err := kafka.NewConsumer(&kafka.ConfigMap{
 		"bootstrap.servers":  "kafka:9092",
@@ -91,7 +90,7 @@ func (kc *kafkaClient) Subscribe(ctx context.Context, topic string, values map[a
 		return err
 	}
 
-	values[keyConsumer] = consumer
+	payload[keyConsumer] = consumer
 
 	err = consumer.SubscribeTopics([]string{topic}, nil)
 	if err != nil {
@@ -131,14 +130,15 @@ func (kc *kafkaClient) Subscribe(ctx context.Context, topic string, values map[a
 	return nil
 }
 
-func (kc *kafkaClient) Unsubscribe(ctx context.Context, topic string, values map[any]any) (err error) {
-	consumer, err := retrieveValue(keyConsumer, values, (*kafka.Consumer)(nil))
+func (kc *kafkaClient) Unsubscribe(ctx context.Context, topic string, payload map[any]any) (err error) {
+	consumer, err := retrieveValue(keyConsumer, payload, (*kafka.Consumer)(nil))
 	if err != nil {
 		return err
 	}
 
 	defer func() {
-		if errClose := consumer.Close(); errClose != nil && err == nil {
+		errClose := consumer.Close()
+		if err == nil {
 			err = errClose
 		}
 	}()
@@ -184,49 +184,43 @@ func (kc *kafkaClient) Publish(ctx context.Context, topic string, message []byte
 		if ev.TopicPartition.Error != nil {
 			return ev.TopicPartition.Error
 		}
+	} else {
+		return fmt.Errorf("kafka: gotten event data does not match type %T, got type %T", ev, data)
 	}
 	return nil
 }
 
-func (kc *kafkaClient) ReadMessages(ctx context.Context, topic string, ws *websocket.Conn, values map[any]any, ctxLogger logger.Logger) {
-	consumer, err := retrieveValue(keyConsumer, values, (*kafka.Consumer)(nil))
+func (kc *kafkaClient) ReadMessages(ctx context.Context, topic string, ws *websocket.Conn, payload map[any]any, ctxLogger logger.Logger) {
+	consumer, err := retrieveValue(keyConsumer, payload, (*kafka.Consumer)(nil))
 	if err != nil {
-		ctxLogger.Fatal(err.Error())
+		ctxLogger.Panic(err)
 	}
+	chStopReading, err := broker.RetrieveValue(broker.KeyChStopReading, payload, (chan struct{})(nil))
+	if err != nil {
+		ctxLogger.Panic(err)
+	}
+	defer close(chStopReading)
 	for {
 		if err := ctx.Err(); err != nil {
 			if !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 				ctxLogger.Error(err.Error())
 			}
-			return
+			break
 		}
 		xmessage, err := consumer.ReadMessage(time.Millisecond * 500)
 		if errKafka, ok := err.(kafka.Error); ok && errKafka.IsTimeout() {
 			continue
 		} else if err != nil {
 			ctxLogger.Error(err.Error())
-			return
+			break
 		}
-		message := new(chats.Message)
-		if err = json.Unmarshal(xmessage.Value, message); err != nil {
-			ctxLogger.Error(err.Error())
-			continue
-		}
-
-		if message.Type == chats.MessageTypeTyping && message.Date.Add(time.Second*2).UnixMilli() < time.Now().UnixMilli() {
-			if _, err = consumer.CommitMessage(xmessage); err != nil {
-				ctxLogger.Error(err.Error())
-			}
-			continue
-		}
-		err = websocket.JSON.Send(ws, message)
+		err = chats.SendMessage(xmessage.Value, ws)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				break
 			}
 			ctxLogger.Error(err.Error())
 			//TODO: add to queue with errors
-			continue
 		}
 		if _, err = consumer.CommitMessage(xmessage); err != nil {
 			ctxLogger.Error(err.Error())
@@ -249,7 +243,7 @@ func retrieveValue[V valueObjects](key string, values map[any]any, _ V) (V, erro
 	}
 	object, ok := value.(V)
 	if !ok {
-		return nil, fmt.Errorf("kafka: type of value gotten by key \"%s\" is %T, expected %T", key, value, (V)(nil))
+		return nil, fmt.Errorf("kafka: type of value gotten by key \"%s\" is %T, expected %T", key, value, object)
 	}
 	return object, nil
 }

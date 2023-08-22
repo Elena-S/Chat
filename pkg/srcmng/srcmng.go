@@ -36,7 +36,7 @@ func (s *sourceKeeper) MustLaunchAll() {
 }
 
 func (s *sourceKeeper) CloseAll() {
-	ctxLogger := logger.ChatLogger.WithEventField("Close sources")
+	ctxLogger := logger.ChatLogger.WithEventField("Source closing")
 	var wg sync.WaitGroup
 	for _, source := range s.sources {
 		source := source

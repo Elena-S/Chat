@@ -180,7 +180,6 @@ func loginPOST(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger)
 		err = errors.New("handlers: the login challenge is not set")
 		return
 	}
-	remember := r.Form.Get("remember_me") == "on"
 	login := r.Form.Get("login")
 	pwd := r.Form.Get("pwd")
 
@@ -198,7 +197,7 @@ func loginPOST(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger)
 	}
 
 	rh := NewResponseHelper(rw, r)
-	return auth.OAuthManager.AcceptLoginRequest(r.Context(), user.IDToString(), loginChallenge, remember, rh)
+	return auth.OAuthManager.AcceptLoginRequest(r.Context(), user.IDToString(), loginChallenge, rh)
 }
 
 func fulfillAuth(rh *responseHelper) (err error) {

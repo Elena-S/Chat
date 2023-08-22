@@ -84,7 +84,7 @@ func (chat *Chat) createNX(ctx context.Context) (err error) {
 	if err != nil {
 		return
 	}
-	defer tx.Rollback()
+	defer func() { err = database.Rollback(tx, err) }()
 
 	ok, err := chat.exists(tx)
 	if err != nil {
@@ -257,24 +257,24 @@ func GetChatInfoByID(ID uint, userID uint) (chat Chat, err error) {
 	q := QueryChat{}
 	q.Text = `
 	SELECT 
-	chats.id id,
-	chats.type_id type,
-	chats.name name,
-	COALESCE(users.full_name, chats.name) presentation,
-	COALESCE(users.phone, '') phone,
-	COALESCE(users.id, 0) user_id
-FROM 
-	chats AS chats
-		JOIN chat_contacts AS chat_contacts
-		ON chats.id = $1
-		AND chats.id = chat_contacts.chat_id
-		AND chat_contacts.user_id = $2
-		LEFT JOIN chat_contacts AS chat_contact
-		ON chats.id = chat_contact.chat_id
-		AND chat_contact.user_id != $2
-		AND chats.type_id = $3
-		LEFT JOIN users AS users
-		ON chat_contact.user_id = users.id`
+		chats.id id,
+		chats.type_id type,
+		chats.name name,
+		COALESCE(users.full_name, chats.name) presentation,
+		COALESCE(users.phone, '') phone,
+		COALESCE(users.id, 0) user_id
+	FROM 
+		chats AS chats
+			JOIN chat_contacts AS chat_contacts
+			ON chats.id = $1
+			AND chats.id = chat_contacts.chat_id
+			AND chat_contacts.user_id = $2
+			LEFT JOIN chat_contacts AS chat_contact
+			ON chats.id = chat_contact.chat_id
+			AND chat_contact.user_id != $2
+			AND chats.type_id = $3
+			LEFT JOIN users AS users
+			ON chat_contact.user_id = users.id`
 	q.Params = []any{ID, userID, ChatTypePrivate}
 
 	chats, err := q.result()
@@ -283,7 +283,7 @@ FROM
 	}
 
 	if len(chats) == 0 {
-		err = fmt.Errorf("chats: chat with ID %d and user ID %d not exists", ID, userID)
+		err = fmt.Errorf("chats: a chat with an ID %d and a user ID %d does not exist", ID, userID)
 		return
 	}
 

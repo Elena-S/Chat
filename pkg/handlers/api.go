@@ -185,7 +185,6 @@ func ChatHistory(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logge
 func WSConnection(ws *websocket.Conn) {
 	var err error
 	var userID uint
-	var timer *time.Timer
 
 	ctxLogger := logger.ChatLogger.WithEventField("ws connection").With("remote addr", ws.Request().RemoteAddr)
 	ctxLogger.Info("Opened")
@@ -198,39 +197,33 @@ func WSConnection(ws *websocket.Conn) {
 			ctxLogger.Error(fmt.Sprintf("handlers: panic raised when handle websocket connection, %v", data))
 		}
 		ctxLogger.Info("Closed")
-	}()
-
-	defer func() {
-		if timer != nil && timer.Stop() {
-			timer.Reset(0)
-		}
-		if err := conns.Pool.CloseAndDelete(userID, ws); err != nil {
-			ctxLogger.Error(err.Error())
-		}
+		ctxLogger.Sync()
 	}()
 
 	userID, err = NewRequestHelper(ws.Request()).GetUserID()
 	if err != nil {
 		return
 	}
+	ctxLogger = ctxLogger.With("user id", userID)
 
 	connNum, err := conns.Pool.Store(userID, ws)
-
-	ctxLogger = ctxLogger.With("user id", userID).With("connection number", connNum)
+	defer func() {
+		errClose := conns.Pool.CloseAndDelete(userID, ws)
+		if errClose != nil && err == nil {
+			err = errClose
+		}
+	}()
 
 	if err != nil {
 		return
 	}
 
-	duration := time.Minute * 30
-	timer = time.NewTimer(duration)
+	ctxLogger = ctxLogger.With("connection number", connNum)
 
-	go func() {
-		<-timer.C
-		if err := ws.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			ctxLogger.Error(err.Error())
-		}
-	}()
+	err = ws.SetDeadline(time.Now().Add(time.Minute * 31))
+	if err != nil {
+		return
+	}
 
 	for {
 		var reply []byte
@@ -245,9 +238,6 @@ func WSConnection(ws *websocket.Conn) {
 				ctxLogger.Error(errMsg.Error())
 				continue
 			}
-		}
-		if timer.Stop() {
-			timer.Reset(duration)
 		}
 
 		message := new(chats.Message)

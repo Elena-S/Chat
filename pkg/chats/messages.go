@@ -11,6 +11,7 @@ import (
 	"github.com/Elena-S/Chat/pkg/broker"
 	"github.com/Elena-S/Chat/pkg/database"
 	"github.com/Elena-S/Chat/pkg/users"
+	"golang.org/x/net/websocket"
 )
 
 type MessageType uint
@@ -32,21 +33,21 @@ const (
 
 func (message *Message) Register(senderID uint) (err error) {
 	if message.ID != 0 {
-		err = errors.New("chats: got non zero message identifier")
+		err = errors.New("chats: got a non zero message identifier")
 		return
 	}
 	if message.ChatID == 0 {
-		err = errors.New("chats: got zero chat identifier")
+		err = errors.New("chats: got a zero chat identifier")
 		return
 	}
 	if message.Text == "" {
-		err = errors.New("chats: got empty message")
+		err = errors.New("chats: got an empty message")
 		return
 	}
 
 	sender, err := users.GetUserByID(senderID)
 	if err != nil {
-		err = fmt.Errorf("chats: a sender with the given id %d is not exists", senderID)
+		err = fmt.Errorf("chats: a sender with the given id %d does not exist", senderID)
 		return
 	}
 	message.AuthorID = senderID
@@ -61,7 +62,7 @@ func (message *Message) Register(senderID uint) (err error) {
 	if err != nil {
 		return
 	}
-	defer tx.Rollback()
+	defer func() { err = database.Rollback(tx, err) }()
 
 	err = message.create(tx)
 	if err != nil {
@@ -103,6 +104,17 @@ func (message *Message) create(tx *sql.Tx) (err error) {
 	INSERT INTO chat_messages (chat_id, author_id, date, text) 
 	VALUES ($1, $2, $3, $4)
 	RETURNING id`, message.ChatID, message.AuthorID, message.Date, message.Text).Scan(&message.ID)
+}
+
+func SendMessage(xmessage []byte, ws *websocket.Conn) (err error) {
+	message := new(Message)
+	if err = json.Unmarshal(xmessage, message); err != nil {
+		return err
+	}
+	if message.Type == MessageTypeTyping && message.Date.Add(time.Second*2).UnixMilli() < time.Now().UnixMilli() {
+		return
+	}
+	return websocket.JSON.Send(ws, message)
 }
 
 type History struct {

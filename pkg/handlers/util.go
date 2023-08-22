@@ -16,6 +16,7 @@ import (
 const (
 	cookieNameAccessToken  = "__Secure-access_token"
 	cookieNameRefreshToken = "__Secure-refresh_token"
+	cookieNameIDToken      = "id_token"
 )
 
 func NewRequestHelper(r *http.Request) *requestHelper {
@@ -103,6 +104,7 @@ func (rh *responseHelper) SetTokens(tokens auth.TokenInfoRetriver) error {
 	if tokens.RefreshToken() == "" {
 		return errors.New("handlers: missing a refresh token")
 	}
+
 	expiry := tokens.Expiry()
 	rh.rw.Header().Add("Set-Cookie", tokenCookieString(cookieNameAccessToken, tokens.AccessToken(), expiry))
 	rh.rw.Header().Add("Set-Cookie", tokenCookieString(cookieNameRefreshToken, tokens.RefreshToken(), expiry.Add(time.Hour*4320)))

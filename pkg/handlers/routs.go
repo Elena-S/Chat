@@ -49,27 +49,27 @@ func handlerWithChatLogger(handler func(rw http.ResponseWriter, r *http.Request,
 	event string,
 	errorHandler func(rw http.ResponseWriter, r *http.Request, err error)) func(http.ResponseWriter, *http.Request) {
 	return func(rw http.ResponseWriter, r *http.Request) {
+		var err error
 		ctxLogger := logger.ChatLogger.WithEventField(event)
 		defer func() {
-			data := recover()
-			if data == nil {
-				return
+			if err == nil {
+				data := recover()
+				if data == nil {
+					return
+				}
+				if dataValue, ok := data.(error); ok {
+					err = fmt.Errorf("handlers: panic raised when executing %s, data %w", event, dataValue)
+				} else {
+					err = fmt.Errorf("handlers: panic raised when executing %s, data %v", event, dataValue)
+				}
 			}
-			var err error
-			if dataValue, ok := data.(error); ok {
-				err = fmt.Errorf("handlers: panic raised when executing %s, data %w", event, dataValue)
-			} else {
-				err = fmt.Errorf("handlers: panic raised when executing %s, data %v", event, dataValue)
-			}
+
 			ctxLogger.Error(err.Error())
+			ctxLogger.Sync()
 			errorHandler(rw, r, err)
 		}()
 
-		err := handler(rw, r, ctxLogger)
-		if err != nil {
-			ctxLogger.Error(err.Error())
-			errorHandler(rw, r, err)
-		}
+		err = handler(rw, r, ctxLogger)
 	}
 }
 

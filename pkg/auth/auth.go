@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Elena-S/Chat/pkg/logger"
 	"github.com/Elena-S/Chat/pkg/redis"
 	ory "github.com/ory/client-go"
 	"golang.org/x/oauth2"
@@ -104,10 +104,13 @@ func public() *ory.APIClient {
 
 func oAuth2HydraClient() *ory.OAuth2Client {
 	oAuth2ClientOnce.Do(func() {
+		ctxLogger := logger.ChatLogger.WithEventField("OAuth2 client creation")
+
 		const envClientSecret = "HYDRA_OAUTH2_CLIENT_SECRET"
 		clientSecret := os.Getenv(envClientSecret)
 		if clientSecret == "" {
-			log.Fatalf("auth: no client secret was provided in %s env var", envClientSecret)
+			err := fmt.Errorf("auth: no client secret was provided in %s env var", envClientSecret)
+			ctxLogger.Fatal(err.Error())
 		}
 		clientName := "Chat"
 
@@ -126,7 +129,8 @@ func oAuth2HydraClient() *ory.OAuth2Client {
 			}
 		}
 		if err != nil {
-			log.Fatalf("auth: an error occured when calling OAuth2Api.ListOAuth2Clients: %v\nfull HTTP response: %v\n", err, response)
+			err = fmt.Errorf("auth: an error occured when calling OAuth2Api.ListOAuth2Clients: %w\nfull HTTP response: %v\n", err, response)
+			ctxLogger.Fatal(err.Error())
 		}
 
 		if len(list) > 0 {
@@ -148,13 +152,12 @@ func oAuth2HydraClient() *ory.OAuth2Client {
 		oAuth2Client.SetTokenEndpointAuthSigningAlg("S256")
 		oAuth2Client.SetGrantTypes([]string{"authorization_code", "refresh_token"})
 		oAuth2Client.SetRedirectUris([]string{"https://localhost:8000/authentication/finish", "https://localhost:8000/authentication/finish/silent"})
-		oAuth2Client.SetBackchannelLogoutUri("https://localhost:8000/authentication/logout")
-		oAuth2Client.SetBackchannelLogoutSessionRequired(true)
 		oAuth2Client.SetPostLogoutRedirectUris([]string{"https://localhost:8000"})
 
 		oAuth2Client, response, err = private().OAuth2Api.CreateOAuth2Client(ctx).OAuth2Client(*oAuth2Client).Execute()
 		if err != nil {
-			log.Fatalf("auth: an error occured when calling OAuth2Api.CreateOAuth2Client: %v\nfull HTTP response: %v\n", err, response)
+			err = fmt.Errorf("auth: an error occured when calling OAuth2Api.CreateOAuth2Client: %w\nfull HTTP response: %v\n", err, response)
+			ctxLogger.Fatal(err.Error())
 		}
 	})
 
@@ -166,6 +169,8 @@ type TokenInfoRetriver interface {
 	RefreshToken() string
 	Expiry() time.Time
 }
+
+var _ TokenInfoRetriver = (*oAuthTokens)(nil)
 
 type oAuthTokens struct {
 	tokens *oauth2.Token
@@ -218,17 +223,17 @@ func (m *oAuthManager) LoginRequest(ctx context.Context, loginChallenge string, 
 		return false, fmt.Errorf("auth: an error occured when calling OAuth2Api.GetOAuth2LoginRequest: %w\nfull HTTP response: %v", err, response)
 	}
 	if loginRequest.GetSkip() {
-		err = m.AcceptLoginRequest(ctx, loginRequest.GetSubject(), loginChallenge, true, r)
+		err = m.AcceptLoginRequest(ctx, loginRequest.GetSubject(), loginChallenge, r)
 		return err == nil, err
 	}
 	return
 }
 
-func (m *oAuthManager) AcceptLoginRequest(ctx context.Context, sub string, loginChallenge string, remember bool, r Redirector) error {
+func (m *oAuthManager) AcceptLoginRequest(ctx context.Context, sub string, loginChallenge string, r Redirector) error {
 	acceptRequest := ory.NewAcceptOAuth2LoginRequest(sub)
-	acceptRequest.SetRemember(remember)
+	acceptRequest.SetRemember(true)
 	acceptRequest.SetRememberFor(15552000) //6 months
-	acceptRequest.SetExtendSessionLifespan(remember)
+	acceptRequest.SetExtendSessionLifespan(true)
 	redirectTo, response, err := private().OAuth2Api.AcceptOAuth2LoginRequest(ctx).LoginChallenge(loginChallenge).AcceptOAuth2LoginRequest(*acceptRequest).Execute()
 	if err != nil {
 		return fmt.Errorf("auth: an error occured when calling OAuth2Api.AcceptOAuth2LoginRequest: %w\nfull HTTP response: %v", err, response)

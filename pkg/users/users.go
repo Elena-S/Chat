@@ -15,7 +15,7 @@ import (
 
 var (
 	ErrUsrExists        = errors.New("users: a user with this phone number already exists")
-	ErrNumUsr           = errors.New("users: there is more than 1 user with the same pnone number")
+	ErrNumUsr           = errors.New("users: there is more than 1 user with the same phone number")
 	ErrWrongCredentials = errors.New("users: wrong login or password")
 )
 
@@ -103,7 +103,7 @@ func (user *User) Login() string {
 
 func (user *User) createNX(ctx context.Context) (err error) {
 	tx, err := database.DB().BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	defer tx.Rollback()
+	defer func() { err = database.Rollback(tx, err) }()
 
 	ok, err := user.exists()
 	if err != nil {
@@ -123,8 +123,7 @@ func (user *User) createNX(ctx context.Context) (err error) {
 		return
 	}
 
-	err = tx.Commit()
-	return
+	return tx.Commit()
 }
 
 func (user *User) exists() (exists bool, err error) {

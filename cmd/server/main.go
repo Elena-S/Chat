@@ -17,14 +17,18 @@ import (
 )
 
 func main() {
+	var err error
+
 	defer func() {
 		ctxLogger := logger.ChatLogger.WithEventField("Stop of the server")
-		if data := recover(); data != nil {
+		if err != nil {
+			ctxLogger.Error(err.Error())
+		} else if data := recover(); data != nil {
 			ctxLogger.Error(fmt.Sprintf("main: panic raised, %v", data))
 		} else {
 			ctxLogger.Info("")
 		}
-		logger.ChatLogger.Sync()
+		ctxLogger.Sync()
 	}()
 
 	ctxLogger := logger.ChatLogger.WithEventField("Start of the server")
@@ -36,9 +40,7 @@ func main() {
 	handlers.SetupRouts()
 
 	//needs config file
-	if err := http.ListenAndServeTLS(":8000", "../../cert/certificate.crt", "../../cert/privateKey.key", nil); err != nil {
-		ctxLogger.Fatal(err.Error())
-	}
+	err = http.ListenAndServeTLS(":8000", "../../cert/certificate.crt", "../../cert/privateKey.key", nil)
 }
 
 func initComponenets() {

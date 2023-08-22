@@ -2,7 +2,6 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -38,7 +37,7 @@ func (rc *redisClient) MustLaunch() {
 		const envRedisUserPwd = "REDIS_USER_PASSWORD"
 		pwd := os.Getenv(envRedisUserPwd)
 		if pwd == "" {
-			logger.ChatLogger.Fatal(fmt.Sprintf("redis: no password was provided in %s env var", envRedisUserPwd))
+			logger.ChatLogger.WithEventField("redis client creation").Fatal(fmt.Sprintf("redis: no password was provided in %s env var", envRedisUserPwd))
 		}
 
 		rc.client = redis.NewClient(&redis.Options{
@@ -68,7 +67,7 @@ func (rc *redisClient) SetMinStorageDuration(d time.Duration) {
 	rc.minStorageDuration = d
 }
 
-func (rc *redisClient) Subscribe(ctx context.Context, stream string, values map[any]any) error {
+func (rc *redisClient) Subscribe(ctx context.Context, stream string, payload map[any]any) error {
 	args := &redis.XAddArgs{
 		Stream: stream,
 		Values: valueMessage([]byte{}),
@@ -77,7 +76,7 @@ func (rc *redisClient) Subscribe(ctx context.Context, stream string, values map[
 	return rc.initClient().XAdd(ctx, args).Err()
 }
 
-func (rc *redisClient) Unsubscribe(ctx context.Context, stream string, values map[any]any) error {
+func (rc *redisClient) Unsubscribe(ctx context.Context, stream string, payload map[any]any) error {
 	return nil
 }
 
@@ -90,14 +89,20 @@ func (rc *redisClient) Publish(ctx context.Context, stream string, message []byt
 	return rc.initClient().XAdd(ctx, args).Err()
 }
 
-func (rc *redisClient) ReadMessages(ctx context.Context, stream string, ws *websocket.Conn, values map[any]any, ctxLogger logger.Logger) {
+func (rc *redisClient) ReadMessages(ctx context.Context, stream string, ws *websocket.Conn, payload map[any]any, ctxLogger logger.Logger) {
+	chStopReading, err := broker.RetrieveValue(broker.KeyChStopReading, payload, (chan struct{})(nil))
+	if err != nil {
+		ctxLogger.Panic(err)
+	}
+	defer close(chStopReading)
+
 	offset := "$"
 	for {
 		if err := ctx.Err(); err != nil {
 			if !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 				ctxLogger.Error(err.Error())
 			}
-			return
+			break
 		}
 		args := &redis.XReadArgs{
 			Streams: []string{stream, offset},
@@ -140,20 +145,7 @@ func (rc *redisClient) ReadMessages(ctx context.Context, stream string, ws *webs
 					continue
 				}
 
-				message := new(chats.Message)
-				if err = json.Unmarshal([]byte(value), message); err != nil {
-					ctxLogger.Error(err.Error())
-					continue
-				}
-
-				if message.Type == chats.MessageTypeTyping && message.Date.Add(time.Second*2).UnixMilli() < time.Now().UnixMilli() {
-					if err := rc.client.XDel(ctx, stream, xmessage.ID).Err(); err != nil {
-						ctxLogger.Error(err.Error())
-					}
-					continue
-				}
-
-				err = websocket.JSON.Send(ws, message)
+				err = chats.SendMessage([]byte(value), ws)
 				if err != nil {
 					if errors.Is(err, net.ErrClosed) {
 						break

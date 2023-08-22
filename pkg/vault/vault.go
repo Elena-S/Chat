@@ -16,14 +16,11 @@ import (
 
 var _ srcmng.SourceManager = (*storage)(nil)
 
-var ErrInvalidFormat = errors.New("vault: invalid format of the storaged secret")
+var ErrInvalidFormat = errors.New("vault: invalid format of the storage secret")
 
 const secretPath = "kv/chat/user_profiles"
 
-var SecretStorage *storage = &storage{
-	chLoggedIn: make(chan struct{}),
-	chClosed:   make(chan struct{}),
-}
+var SecretStorage *storage = new(storage)
 
 type Secret struct {
 	Salt         []byte
@@ -33,8 +30,8 @@ type Secret struct {
 type storage struct {
 	onceLaunch   sync.Once
 	client       *vault.Client
-	onceClose    sync.Once
-	chClosed     chan struct{}
+	ctx          context.Context
+	cancelFunc   context.CancelFunc
 	onceLoggedIn sync.Once
 	chLoggedIn   chan struct{}
 }
@@ -48,15 +45,17 @@ func (s *storage) MustLaunch() {
 		var err error
 		s.client, err = vault.NewClient(config)
 		if err != nil {
-			logger.ChatLogger.Fatal(err.Error())
+			logger.ChatLogger.WithEventField("vault client creation").Fatal(err.Error())
 		}
+		s.chLoggedIn = make(chan struct{})
+		s.ctx, s.cancelFunc = context.WithCancel(context.Background())
 		go s.renewToken()
 		<-s.chLoggedIn
 	})
 }
 
 func (s *storage) Close() error {
-	s.onceClose.Do(func() { close(s.chClosed) })
+	s.cancelFunc()
 	return nil
 }
 
@@ -114,25 +113,25 @@ func (s *storage) initClient() *vault.Client {
 }
 
 func (s *storage) renewToken() {
+	ctxLogger := logger.ChatLogger.WithEventField("secret storage token renew")
+	defer ctxLogger.Sync()
+
 	for {
 		vaultLoginResp, err := s.login()
 		if err != nil {
-			logger.ChatLogger.Fatal(fmt.Sprintf("vault: %v", err.Error()))
+			ctxLogger.Fatal(fmt.Sprintf("vault: %v", err.Error()))
 		}
 
 		s.onceLoggedIn.Do(func() { close(s.chLoggedIn) })
 
 		if !vaultLoginResp.Auth.Renewable {
-			logger.ChatLogger.Info("vault: token is not configured to be renewable.")
+			ctxLogger.Info("vault: the token is not configured to be renewable")
 			break
 		}
 
-		err, stop := s.manageTokenLifecycle(vaultLoginResp)
+		err = s.manageTokenLifecycle(vaultLoginResp, ctxLogger)
 		if err != nil {
-			logger.ChatLogger.Fatal(fmt.Sprintf("vault: unable to start managing token lifecycle: %v", err))
-		}
-		if stop {
-			break
+			ctxLogger.Fatal(fmt.Sprintf("vault: unable to start managing token lifecycle: %v", err))
 		}
 	}
 }
@@ -154,7 +153,7 @@ func (s *storage) login() (*vault.Secret, error) {
 		return nil, err
 	}
 
-	authInfo, err := s.client.Auth().Login(context.Background(), appRoleAuth)
+	authInfo, err := s.client.Auth().Login(s.ctx, appRoleAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -165,32 +164,30 @@ func (s *storage) login() (*vault.Secret, error) {
 	return authInfo, nil
 }
 
-func (s *storage) manageTokenLifecycle(token *vault.Secret) (error, bool) {
-
+func (s *storage) manageTokenLifecycle(token *vault.Secret, ctxLogger logger.Logger) error {
 	watcher, err := s.client.NewLifetimeWatcher(&vault.LifetimeWatcherInput{
 		Secret:    token,
 		Increment: 3600,
 	})
 	if err != nil {
-		return err, true
+		return err
 	}
 
 	go watcher.Start()
 	defer watcher.Stop()
-
 	for {
 		select {
 		case err := <-watcher.DoneCh():
 			if err != nil {
-				logger.ChatLogger.Info(fmt.Sprintf("vault: failed to renew token: %v. Re-attempting login.", err))
-				return nil, false
+				ctxLogger.Info(fmt.Sprintf("vault: failed to renew token: %v. Re-attempting login", err))
+				return nil
 			}
-			logger.ChatLogger.Info("vault: token can no longer be renewed. Re-attempting login.")
-			return nil, false
+			ctxLogger.Info("vault: token can no longer be renewed. Re-attempting login")
+			return nil
 		case renewal := <-watcher.RenewCh():
-			logger.ChatLogger.Info(fmt.Sprintf("vault: successfully renewed: %#v", renewal))
-		case <-s.chClosed:
-			return nil, true
+			ctxLogger.Info(fmt.Sprintf("vault: successfully renewed: %#v", renewal))
+		case <-s.ctx.Done():
+			return s.ctx.Err()
 		}
 	}
 }

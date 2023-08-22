@@ -11,64 +11,117 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+const KeyChStopReading = "brokerKeyChStopReading"
 const keyCancelFunc = "brokerCancelFunc"
 
 var ErrBrokerIsNotAssigned error = errors.New("broker: the message broker is not assigned")
+var ErrBrokerReassignment error = errors.New("broker: message broker reassignment is not available")
 
 type PubSub interface {
 	SetMinStorageDuration(d time.Duration)
-	Subscribe(ctx context.Context, topic string, values map[any]any) error
-	Unsubscribe(ctx context.Context, topic string, values map[any]any) error
+	Subscribe(ctx context.Context, topic string, payload map[any]any) error
+	Unsubscribe(ctx context.Context, topic string, payload map[any]any) error
 	Publish(ctx context.Context, topic string, message []byte) error
-	ReadMessages(ctx context.Context, topic string, ws *websocket.Conn, values map[any]any, ctxLogger logger.Logger)
+	ReadMessages(ctx context.Context, topic string, ws *websocket.Conn, payload map[any]any, ctxLogger logger.Logger)
 }
 
 var onceAssign sync.Once
 var messageBroker PubSub
 
 func MustAssign(client PubSub) {
-	err := errors.New("broker: message broker reassignment is not available")
+	err := ErrBrokerReassignment
+	ctxLogger := logger.ChatLogger.WithEventField("broker assignment")
+	defer func() {
+		if err != nil {
+			ctxLogger.Fatal(err.Error())
+		}
+		ctxLogger.Sync()
+	}()
 	onceAssign.Do(func() {
 		messageBroker = client
 		messageBroker.SetMinStorageDuration(time.Hour * 72)
-		err = nil
+		if err == ErrBrokerReassignment {
+			err = nil
+		}
 	})
-	if err != nil {
-		logger.ChatLogger.WithEventField("broker assignment").Fatal(err.Error())
-	}
 }
 
-func Subscribe(ctx context.Context, topic string, ws *websocket.Conn, values map[any]any) error {
+func Subscribe(ctx context.Context, topic string, ws *websocket.Conn, payload map[any]any) (err error) {
+	ctxLogger := logger.ChatLogger.WithEventField("broker subscription").With("topic", topic)
+	defer func() {
+		if err != nil {
+			ctxLogger.Error(err.Error())
+		} else if data := recover(); data != nil {
+			ctxLogger.Error(fmt.Sprintf("broker: panic raised, %v", data))
+		}
+		ctxLogger.Sync()
+	}()
+
 	if messageBroker == nil {
 		return ErrBrokerIsNotAssigned
 	}
 
-	if err := messageBroker.Subscribe(ctx, topic, values); err != nil {
+	err = messageBroker.Subscribe(ctx, topic, payload)
+	if err != nil {
 		return err
 	}
 
 	ctx, cancelFunc := context.WithCancel(ctx)
-	values[keyCancelFunc] = cancelFunc
-	ctxLogger := logger.ChatLogger.WithEventField("reading messages from broker").With("topic", topic)
+	payload[keyCancelFunc] = cancelFunc
+	payload[KeyChStopReading] = make(chan struct{})
 
-	go messageBroker.ReadMessages(ctx, topic, ws, values, ctxLogger)
+	go func() {
+		ctxLogger := logger.ChatLogger.WithEventField("broker reading messages").With("topic", topic)
+		defer func() {
+			if data := recover(); data != nil {
+				ctxLogger.Error(fmt.Sprintf("broker: panic raised, %v", data))
+			}
+			ctxLogger.Sync()
+		}()
+		messageBroker.ReadMessages(ctx, topic, ws, payload, ctxLogger)
+	}()
 
 	return nil
 }
 
-func Unsubscribe(ctx context.Context, topic string, values map[any]any) error {
+func Unsubscribe(ctx context.Context, topic string, payload map[any]any) (err error) {
+	ctxLogger := logger.ChatLogger.WithEventField("broker unsubscription").With("topic", topic)
+	defer func() {
+		if err != nil {
+			ctxLogger.Error(err.Error())
+		} else if data := recover(); data != nil {
+			ctxLogger.Error(fmt.Sprintf("broker: panic raised, %v", data))
+		}
+		ctxLogger.Sync()
+	}()
 	if messageBroker == nil {
 		return ErrBrokerIsNotAssigned
 	}
-	cancelFunc, err := retrieveValue(keyCancelFunc, values, context.CancelFunc(nil))
+	cancelFunc, err := RetrieveValue(keyCancelFunc, payload, context.CancelFunc(nil))
 	if err != nil {
 		return err
 	}
 	cancelFunc()
-	return messageBroker.Unsubscribe(ctx, topic, values)
+
+	chStopReading, err := RetrieveValue(KeyChStopReading, payload, (chan struct{})(nil))
+	if err != nil {
+		return err
+	}
+	<-chStopReading
+
+	return messageBroker.Unsubscribe(ctx, topic, payload)
 }
 
-func Publish(ctx context.Context, topic string, message []byte) error {
+func Publish(ctx context.Context, topic string, message []byte) (err error) {
+	ctxLogger := logger.ChatLogger.WithEventField("broker publish message").With("topic", topic).With("message", message)
+	defer func() {
+		if err != nil {
+			ctxLogger.Error(err.Error())
+		} else if data := recover(); data != nil {
+			ctxLogger.Error(fmt.Sprintf("broker: panic raised, %v", data))
+		}
+		ctxLogger.Sync()
+	}()
 	if messageBroker == nil {
 		return ErrBrokerIsNotAssigned
 	}
@@ -76,17 +129,17 @@ func Publish(ctx context.Context, topic string, message []byte) error {
 }
 
 type valueObjects interface {
-	context.CancelFunc
+	context.CancelFunc | chan struct{}
 }
 
-func retrieveValue[V valueObjects](key string, values map[any]any, _ V) (V, error) {
+func RetrieveValue[V valueObjects](key string, values map[any]any, _ V) (V, error) {
 	value, ok := values[key]
 	if !ok {
 		return nil, fmt.Errorf("broker: the given parameter \"values\" does not contain key \"%s\"", key)
 	}
 	object, ok := value.(V)
 	if !ok {
-		return nil, fmt.Errorf("broker: type of value gotten by key \"%s\" is %T, expected %T", key, value, (V)(nil))
+		return nil, fmt.Errorf("broker: type of value gotten by key \"%s\" is %T, expected %T", key, value, object)
 	}
 	return object, nil
 }

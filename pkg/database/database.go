@@ -110,3 +110,11 @@ func SerializationFailureError(err error) bool {
 	}
 	return false
 }
+
+func Rollback(tx *sql.Tx, err error) error {
+	errTx := tx.Rollback()
+	if err == nil && errTx != sql.ErrTxDone {
+		return errTx
+	}
+	return err
+}
