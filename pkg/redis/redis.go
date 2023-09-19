@@ -4,59 +4,68 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"strconv"
-	"sync"
 	"time"
 
+	"github.com/Elena-S/Chat/pkg/auth"
 	"github.com/Elena-S/Chat/pkg/broker"
-	"github.com/Elena-S/Chat/pkg/chats"
 	"github.com/Elena-S/Chat/pkg/logger"
-	"github.com/Elena-S/Chat/pkg/srcmng"
 	"github.com/redis/go-redis/v9"
-	"golang.org/x/net/websocket"
+	"go.uber.org/fx"
 )
 
-var _ PubSubSrcManager = (*redisClient)(nil)
-var Client *redisClient = new(redisClient)
+var _ broker.PubSub = (*redisClient)(nil)
 
-type PubSubSrcManager interface {
-	broker.PubSub
-	srcmng.SourceManager
-}
+var Module = fx.Module("redis",
+	fx.Provide(
+		func() (*redisClient, auth.SetGetterEx) {
+			rc := NewClient()
+			return rc, rc
+		},
+		// fx.Annotate(NewClient, fx.As(new(auth.SetGetterEx))),
+	),
+	fx.Invoke(registerFunc),
+)
 
 type redisClient struct {
 	client             *redis.Client
-	once               sync.Once
 	minStorageDuration time.Duration
+	readingTimeout     time.Duration
 }
 
-func (rc *redisClient) MustLaunch() {
-	rc.once.Do(func() {
-		const envRedisUserPwd = "REDIS_USER_PASSWORD"
-		pwd := os.Getenv(envRedisUserPwd)
-		if pwd == "" {
-			logger.ChatLogger.WithEventField("redis client creation").Fatal(fmt.Sprintf("redis: no password was provided in %s env var", envRedisUserPwd))
-		}
+func NewClient() *redisClient {
+	rc := &redisClient{}
+	//TODO: need config
+	rc.client = redis.NewClient(&redis.Options{
+		Addr:       "redis:6379",
+		Username:   "chat",
+		Password:   os.Getenv("REDIS_USER_PASSWORD"),
+		DB:         0,
+		ClientName: "Chat",
+	})
+	return rc
+}
 
-		rc.client = redis.NewClient(&redis.Options{
-			Addr:       "redis:6379",
-			Username:   "chat",
-			Password:   pwd,
-			DB:         0,
-			ClientName: "Chat",
-		})
+func registerFunc(lc fx.Lifecycle, rc *redisClient) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			status := rc.client.Ping(ctx)
+			return status.Err()
+		},
+		OnStop: func(ctx context.Context) error {
+			return rc.Close()
+		},
 	})
 }
 
 func (rc *redisClient) SetEx(ctx context.Context, key string, value any, expiration time.Duration) error {
-	result := rc.initClient().SetEx(ctx, key, value, expiration)
+	result := rc.client.SetEx(ctx, key, value, expiration)
 	return result.Err()
 }
 
 func (rc *redisClient) GetEx(ctx context.Context, key string, expiration time.Duration) (string, error) {
-	result := rc.initClient().GetEx(ctx, key, expiration)
+	result := rc.client.GetEx(ctx, key, expiration)
 	if result.Err() != nil {
 		return "", result.Err()
 	}
@@ -67,13 +76,17 @@ func (rc *redisClient) SetMinStorageDuration(d time.Duration) {
 	rc.minStorageDuration = d
 }
 
+func (rc *redisClient) SetReadingTimeout(d time.Duration) {
+	rc.readingTimeout = time.Millisecond * d
+}
+
 func (rc *redisClient) Subscribe(ctx context.Context, stream string, payload map[any]any) error {
 	args := &redis.XAddArgs{
 		Stream: stream,
 		Values: valueMessage([]byte{}),
 		MinID:  rc.minID(),
 	}
-	return rc.initClient().XAdd(ctx, args).Err()
+	return rc.client.XAdd(ctx, args).Err()
 }
 
 func (rc *redisClient) Unsubscribe(ctx context.Context, stream string, payload map[any]any) error {
@@ -86,16 +99,10 @@ func (rc *redisClient) Publish(ctx context.Context, stream string, message []byt
 		Values: valueMessage(message),
 		MinID:  rc.minID(),
 	}
-	return rc.initClient().XAdd(ctx, args).Err()
+	return rc.client.XAdd(ctx, args).Err()
 }
 
-func (rc *redisClient) ReadMessages(ctx context.Context, stream string, ws *websocket.Conn, payload map[any]any, ctxLogger logger.Logger) {
-	chStopReading, err := broker.RetrieveValue(broker.KeyChStopReading, payload, (chan struct{})(nil))
-	if err != nil {
-		ctxLogger.Panic(err)
-	}
-	defer close(chStopReading)
-
+func (rc *redisClient) ReadMessages(ctx context.Context, stream string, messageHandler func(xmessage []byte) error, payload map[any]any, ctxLogger *logger.Logger) {
 	offset := "$"
 	for {
 		if err := ctx.Err(); err != nil {
@@ -106,10 +113,10 @@ func (rc *redisClient) ReadMessages(ctx context.Context, stream string, ws *webs
 		}
 		args := &redis.XReadArgs{
 			Streams: []string{stream, offset},
-			Block:   time.Millisecond * 500,
+			Block:   rc.readingTimeout,
 			Count:   100,
 		}
-		cmd := rc.initClient().XRead(ctx, args)
+		cmd := rc.client.XRead(ctx, args)
 		if err := cmd.Err(); err == redis.Nil {
 			continue
 		} else if err != nil {
@@ -145,11 +152,8 @@ func (rc *redisClient) ReadMessages(ctx context.Context, stream string, ws *webs
 					continue
 				}
 
-				err = chats.SendMessage([]byte(value), ws)
+				err = messageHandler([]byte(value))
 				if err != nil {
-					if errors.Is(err, net.ErrClosed) {
-						break
-					}
 					ctxLogger.Error(err.Error())
 					//TODO: add to queue with errors
 				}
@@ -163,11 +167,6 @@ func (rc *redisClient) Close() error {
 		return nil
 	}
 	return rc.client.Close()
-}
-
-func (rc *redisClient) initClient() *redis.Client {
-	rc.MustLaunch()
-	return rc.client
 }
 
 func (rc *redisClient) minID() string {

@@ -1,56 +1,275 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 
+	"github.com/Elena-S/Chat/pkg/auth"
+	"github.com/Elena-S/Chat/pkg/broker"
+	"github.com/Elena-S/Chat/pkg/chats"
+	"github.com/Elena-S/Chat/pkg/chats/messages"
+	"github.com/Elena-S/Chat/pkg/conns"
 	"github.com/Elena-S/Chat/pkg/logger"
 	"github.com/Elena-S/Chat/pkg/users"
+	"go.uber.org/fx"
 	"golang.org/x/net/websocket"
 )
 
-func SetupRouts() {
-	http.HandleFunc("/", handlerWithRedirect(Home, "Home request"))
-	http.HandleFunc("/error", handlerWithWriteErrHeader(Error, "Error request"))
-	http.HandleFunc("/authentication/login", handlerWithRedirect(Login, "Login request"))
-	http.HandleFunc("/authentication/login/silent", handlerWithRedirect(SilentLogin, "Silent login request"))
-	http.HandleFunc("/authentication/consent", handlerWithRedirect(Consent, "Consent request"))
-	http.HandleFunc("/authentication/logout", handlerWithRedirect(Logout, "Logout request"))
-	http.HandleFunc("/authentication/finish", handlerWithRedirect(FinishAuth, "Finish auth request"))
-	http.HandleFunc("/authentication/finish/silent", handlerWithRedirect(FinishSilentAuth, "Finish silent auth request"))
-	http.HandleFunc("/authentication/finish/silent/ok", handlerWithRedirect(SilentAuthOK, "Silent auth OK request"))
-	http.HandleFunc("/authentication/refresh_tokens", handlerWithWriteErrHeader(RefreshTokens, "Refresh tokens request"))
-	http.HandleFunc("/chat", handlerWithRedirect(Chat, "Chat request"))
-	http.HandleFunc("/chat/search", handlerWithWriteErrHeader(Search, "Search request"))
-	http.HandleFunc("/chat/list", handlerWithWriteErrHeader(ChatList, "Chat list request"))
-	http.HandleFunc("/chat/history", handlerWithWriteErrHeader(ChatHistory, "Chat history request"))
-	http.HandleFunc("/chat/create", handlerWithWriteErrHeader(CreateChat, "Create chat request"))
-	http.HandleFunc("/chat/chat", handlerWithWriteErrHeader(ChatAbout, "Chat about request"))
-	http.HandleFunc("/chat/user", handlerWithWriteErrHeader(UserAbout, "User about request"))
-	http.Handle("/chat/ws", websocket.Handler(WSConnection))
+var Module = fx.Module("handlers",
+	fx.Provide(
+		NewUserAboutHandler,
+		NewChatHandler,
+		NewHistoryHandler,
+		NewRefTokenHandler,
+		NewWSHandler,
+		NewAuthHandler,
+		NewRoutHandler,
+		NewRouter,
+	),
+	fx.Invoke(registerFunc),
+)
 
-	//NGINX
+type WSHandler struct {
+	oAuthManager   *auth.Manager
+	connsManager   *conns.Manager
+	usersManager   *users.Manager
+	chatsManager   *chats.Manager
+	messageManager *messages.Manager
+	broker         *broker.BrokerClient
+	context        context.Context
+	cancelFunc     context.CancelFunc
+	logger         *logger.Logger
+}
+
+type WSHandlerParams struct {
+	fx.In
+	fx.Lifecycle
+	OAuthManager   *auth.Manager
+	ConnsManager   *conns.Manager
+	UsersManager   *users.Manager
+	ChatsManager   *chats.Manager
+	MessageManager *messages.Manager
+	Broker         *broker.BrokerClient
+	Logger         *logger.Logger
+	Context        context.Context
+}
+
+func NewWSHandler(p WSHandlerParams) *WSHandler {
+	wsh := &WSHandler{
+		oAuthManager:   p.OAuthManager,
+		connsManager:   p.ConnsManager,
+		usersManager:   p.UsersManager,
+		chatsManager:   p.ChatsManager,
+		messageManager: p.MessageManager,
+		broker:         p.Broker,
+		logger:         p.Logger,
+	}
+	wsh.context, wsh.cancelFunc = context.WithCancel(p.Context)
+	p.Lifecycle.Append(fx.Hook{
+		OnStop: func(ctx context.Context) error {
+			wsh.cancelFunc()
+			return nil
+		},
+	})
+	return wsh
+}
+
+type RoutHandler struct {
+	oAuthManager *auth.Manager
+}
+
+type RoutHandlerParams struct {
+	fx.In
+	OAuthManager *auth.Manager
+}
+
+func NewRoutHandler(p RoutHandlerParams) *RoutHandler {
+	rh := &RoutHandler{
+		oAuthManager: p.OAuthManager,
+	}
+	return rh
+}
+
+type AuthHandler struct {
+	oAuthManager *auth.Manager
+	usersManager *users.Manager
+}
+
+type AuthHandlerParams struct {
+	fx.In
+	OAuthManager *auth.Manager
+	UsersManager *users.Manager
+}
+
+func NewAuthHandler(p AuthHandlerParams) *AuthHandler {
+	ah := &AuthHandler{
+		oAuthManager: p.OAuthManager,
+		usersManager: p.UsersManager,
+	}
+	return ah
+}
+
+type RefTokenHandler struct {
+	oAuthManager *auth.Manager
+}
+
+type RefTokenHandlerParams struct {
+	fx.In
+	OAuthManager *auth.Manager
+}
+
+func NewRefTokenHandler(p RefTokenHandlerParams) *RefTokenHandler {
+	ah := &RefTokenHandler{
+		oAuthManager: p.OAuthManager,
+	}
+	return ah
+}
+
+type UserAboutHandler struct {
+	usersManager *users.Manager
+	oAuthManager *auth.Manager
+}
+
+type UserAboutHandlerParams struct {
+	fx.In
+	OAuthManager *auth.Manager
+	UsersManager *users.Manager
+}
+
+func NewUserAboutHandler(p UserAboutHandlerParams) *UserAboutHandler {
+	ah := &UserAboutHandler{
+		oAuthManager: p.OAuthManager,
+		usersManager: p.UsersManager,
+	}
+	return ah
+}
+
+type ChatHandler struct {
+	chatManager  *chats.Manager
+	oAuthManager *auth.Manager
+}
+
+type ChatHandlerParams struct {
+	fx.In
+	OAuthManager *auth.Manager
+	ChatManager  *chats.Manager
+}
+
+func NewChatHandler(p ChatHandlerParams) *ChatHandler {
+	h := &ChatHandler{
+		oAuthManager: p.OAuthManager,
+		chatManager:  p.ChatManager,
+	}
+	return h
+}
+
+type HistoryHandler struct {
+	messageManager *messages.Manager
+	oAuthManager   *auth.Manager
+}
+
+type HistoryHandlerParams struct {
+	fx.In
+	OAuthManager   *auth.Manager
+	MessageManager *messages.Manager
+}
+
+func NewHistoryHandler(p HistoryHandlerParams) *HistoryHandler {
+	h := &HistoryHandler{
+		oAuthManager:   p.OAuthManager,
+		messageManager: p.MessageManager,
+	}
+	return h
+}
+
+type RouterParams struct {
+	fx.In
+	*RoutHandler
+	*AuthHandler
+	*UserAboutHandler
+	*ChatHandler
+	*HistoryHandler
+	*RefTokenHandler
+	*WSHandler
+	*logger.Logger
+}
+type Router struct {
+	logger           *logger.Logger
+	routHandler      *RoutHandler
+	authHandler      *AuthHandler
+	userAboutHandler *UserAboutHandler
+	chatHandler      *ChatHandler
+	historyHandler   *HistoryHandler
+	refTokenHandler  *RefTokenHandler
+	wsHandler        *WSHandler
+}
+
+func NewRouter(p RouterParams) *Router {
+	return &Router{
+		logger:           p.Logger,
+		routHandler:      p.RoutHandler,
+		authHandler:      p.AuthHandler,
+		userAboutHandler: p.UserAboutHandler,
+		chatHandler:      p.ChatHandler,
+		historyHandler:   p.HistoryHandler,
+		refTokenHandler:  p.RefTokenHandler,
+		wsHandler:        p.WSHandler,
+	}
+}
+
+func registerFunc(lc fx.Lifecycle, router *Router) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			router.SetupRouts()
+			return nil
+		},
+	})
+}
+
+func (router *Router) SetupRouts() {
+	http.HandleFunc("/", router.handlerWithRedirect(router.routHandler.Home, "home request"))
+	http.HandleFunc("/error", router.handlerWithWriteErrHeader(router.routHandler.Error, "error request"))
+	http.HandleFunc("/authentication/login", router.handlerWithRedirect(router.authHandler.Login, "login request"))
+	http.HandleFunc("/authentication/login/silent", router.handlerWithRedirect(router.routHandler.SilentLogin, "silent login request"))
+	http.HandleFunc("/authentication/consent", router.handlerWithRedirect(router.routHandler.Consent, "consent request"))
+	http.HandleFunc("/authentication/logout", router.handlerWithRedirect(router.routHandler.Logout, "logout request"))
+	http.HandleFunc("/authentication/finish", router.handlerWithRedirect(router.routHandler.FinishAuth, "finish auth request"))
+	http.HandleFunc("/authentication/finish/silent", router.handlerWithRedirect(router.routHandler.FinishSilentAuth, "finish silent auth request"))
+	http.HandleFunc("/authentication/finish/silent/ok", router.handlerWithRedirect(router.routHandler.SilentAuthOK, "silent auth OK request"))
+	http.HandleFunc("/authentication/refresh_tokens", router.handlerWithWriteErrHeader(router.refTokenHandler.RefreshTokens, "refresh tokens request"))
+	http.HandleFunc("/chat", router.handlerWithRedirect(router.routHandler.Chat, "chat request"))
+	http.HandleFunc("/chat/search", router.handlerWithWriteErrHeader(router.chatHandler.Search, "search request"))
+	http.HandleFunc("/chat/list", router.handlerWithWriteErrHeader(router.chatHandler.ChatList, "chat list request"))
+	http.HandleFunc("/chat/history", router.handlerWithWriteErrHeader(router.historyHandler.ChatHistory, "chat history request"))
+	http.HandleFunc("/chat/create", router.handlerWithWriteErrHeader(router.chatHandler.CreateChat, "create chat request"))
+	http.HandleFunc("/chat/chat", router.handlerWithWriteErrHeader(router.chatHandler.ChatAbout, "chat about request"))
+	http.HandleFunc("/chat/user", router.handlerWithWriteErrHeader(router.userAboutHandler.UserAbout, "user about request"))
+	http.Handle("/chat/ws", websocket.Handler(router.wsHandler.WSConnection))
+
+	//TODO: NGINX
 	http.Handle("/view/", http.FileServer(http.Dir("/usr/src/app")))
 }
 
-func handlerWithRedirect(handler func(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error),
+func (router *Router) handlerWithRedirect(handler func(rw http.ResponseWriter, r *http.Request) (err error),
 	event string) func(http.ResponseWriter, *http.Request) {
-	return handlerWithChatLogger(handler, event, redirectToErrorPage)
+	return router.handlerWithLogger(handler, event, redirectToErrorPage)
 }
 
-func handlerWithWriteErrHeader(handler func(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error),
+func (router *Router) handlerWithWriteErrHeader(handler func(rw http.ResponseWriter, r *http.Request) (err error),
 	event string) func(http.ResponseWriter, *http.Request) {
-	return handlerWithChatLogger(handler, event, writeErrorHeader)
+	return router.handlerWithLogger(handler, event, writeErrorHeader)
 }
 
-func handlerWithChatLogger(handler func(rw http.ResponseWriter, r *http.Request, ctxLogger logger.Logger) (err error),
-	event string,
-	errorHandler func(rw http.ResponseWriter, r *http.Request, err error)) func(http.ResponseWriter, *http.Request) {
+func (router *Router) handlerWithLogger(handler func(rw http.ResponseWriter, r *http.Request) (err error),
+	event string, errorHandler ErrorHandler) func(http.ResponseWriter, *http.Request) {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		var err error
-		ctxLogger := logger.ChatLogger.WithEventField(event)
+		ctxLogger := router.logger.WithEventField(event)
+		ctxLogger.Info("start")
+		defer ctxLogger.Info("finish")
 		defer func() {
 			if err == nil {
 				data := recover()
@@ -69,20 +288,23 @@ func handlerWithChatLogger(handler func(rw http.ResponseWriter, r *http.Request,
 			errorHandler(rw, r, err)
 		}()
 
-		err = handler(rw, r, ctxLogger)
+		err = handler(rw, r)
 	}
 }
 
-func redirectToErrorPage(rw http.ResponseWriter, r *http.Request, err error) {
+type ErrorHandler func(rw http.ResponseWriter, r *http.Request, err error)
+
+var redirectToErrorPage ErrorHandler = func(rw http.ResponseWriter, r *http.Request, err error) {
+	//TODO: need config
 	http.Redirect(rw, r, os.Getenv("URL_ERROR"), http.StatusSeeOther)
 }
 
-func writeErrorHeader(rw http.ResponseWriter, r *http.Request, err error) {
+var writeErrorHeader ErrorHandler = func(rw http.ResponseWriter, r *http.Request, err error) {
 	statusCode := http.StatusInternalServerError
 	switch {
-	case errors.Is(err, users.ErrInvalidCredentials), errors.Is(err, users.ErrInvalidLoginFormat):
+	case errors.Is(err, users.ErrInvalidCredentials), errors.Is(err, users.ErrInvalidPhoneFormat):
 		statusCode = http.StatusBadRequest
-	case errors.Is(err, users.ErrUsrExists), errors.Is(err, users.ErrWrongCredentials):
+	case errors.Is(err, users.ErrExists), errors.Is(err, users.ErrWrongCredentials):
 		statusCode = http.StatusForbidden
 	}
 	http.Error(rw, err.Error(), statusCode)

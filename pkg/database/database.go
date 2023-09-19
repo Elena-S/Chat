@@ -1,107 +1,110 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Elena-S/Chat/pkg/logger"
-	"github.com/Elena-S/Chat/pkg/srcmng"
 	"github.com/lib/pq"
 	"github.com/pressly/goose/v3"
+	"go.uber.org/fx"
 )
 
-var _ srcmng.SourceManager = (*dbInstance)(nil)
-var DBI *dbInstance = new(dbInstance)
+var Module = fx.Module("database",
+	fx.Provide(
+		NewRepository,
+	),
+	fx.Invoke(registerFunc),
+)
 
-type dbInstance struct {
-	db   *sql.DB
-	once sync.Once
+type Repository struct {
+	*sql.DB
+	migrationPath    string
+	dialect          string
+	versionTableName string
+	dsn              string
+	logger           *logger.Logger
 }
 
-func (dbi *dbInstance) MustLaunch() {
-	dbi.once.Do(func() {
-		dbi.connect()
-		dbi.init()
-	})
+type RepositoryParams struct {
+	fx.In
+	Logger *logger.Logger
 }
 
-func (dbi *dbInstance) Close() error {
-	if dbi.db == nil {
-		return nil
-	}
-	return dbi.db.Close()
-}
-
-func (dbi *dbInstance) connect() {
-	var err error
-
-	dsn := fmt.Sprintf(
-		//needs config file
+func NewRepository(p RepositoryParams) (repo *Repository, err error) {
+	repo = &Repository{}
+	repo.logger = p.Logger
+	//TODO: need config
+	repo.dialect = "postgres"
+	repo.dsn = fmt.Sprintf(
 		"host=db user=%s password=%s dbname=%s port=5432 sslmode=disable TimeZone=Europe/Moscow",
 		os.Getenv("DB_USER"),
 		os.Getenv("DB_PASSWORD"),
 		os.Getenv("DB_NAME"),
 	)
-
-	ctxLogger := logger.ChatLogger.WithEventField("connection to the database").With("data source name", dsn)
-	ctxLogger.Info("Start")
-
-	db, err := sql.Open("postgres", dsn)
+	repo.versionTableName = "db_version"
+	repo.migrationPath = "../../db/migrations"
+	repo.DB, err = sql.Open(repo.dialect, repo.dsn)
 	if err != nil {
-		ctxLogger.Fatal(err.Error())
+		return nil, err
+	}
+	return
+}
+
+func registerFunc(lc fx.Lifecycle, r *Repository) {
+	lc.Append(fx.Hook{
+		OnStart: r.connect,
+		OnStop:  func(context.Context) error { return r.DB.Close() },
+	})
+}
+
+func (r *Repository) connect(ctx context.Context) (err error) {
+	ctxLogger := r.logger.WithEventField("connection to the database").With("data source name", r.dsn)
+	ctxLogger.Info("start")
+	defer ctxLogger.OnDefer("database", err, nil, "finish")
+
+	if err = r.ping(ctx); err != nil {
+		return
 	}
 
+	return r.migrate()
+}
+
+func (r *Repository) ping(ctx context.Context) (err error) {
 	for i := 0; i < 3; i++ {
-		err = db.Ping()
-		if errors.Is(err, syscall.ECONNREFUSED) {
+		err = r.DB.Ping()
+		if errors.Is(err, syscall.ECONNREFUSED) && ctx.Err() == nil {
 			time.Sleep(time.Second * 2)
 			continue
 		} else {
 			break
 		}
 	}
-
-	if err != nil {
-		ctxLogger.Fatal(err.Error())
-	}
-
-	ctxLogger.Info("Finish")
-
-	dbi.db = db
+	return
 }
 
-func (dbi *dbInstance) init() {
-
-	//needs config file
-	path := "../../db/migrations"
-
-	ctxLogger := logger.ChatLogger.WithEventField("Init of the database").With("path", path)
-	ctxLogger.Info("Start")
-
-	if err := goose.SetDialect("postgres"); err != nil {
-		ctxLogger.Fatal(err.Error())
+func (r *Repository) migrate() (err error) {
+	if err = goose.SetDialect(r.dialect); err != nil {
+		return
 	}
-
-	//needs config file
-	goose.SetTableName("db_version")
-	if err := goose.Up(dbi.db, path); err != nil {
-		ctxLogger.Fatal(err.Error())
-	}
-
-	ctxLogger.Info("Finish")
+	goose.SetTableName(r.versionTableName)
+	return goose.Up(r.DB, r.migrationPath)
 }
 
-func DB() *sql.DB {
-	DBI.MustLaunch()
-	return DBI.db
+func (r *Repository) RollbackTx(tx *sql.Tx, err error) error {
+	errTx := tx.Rollback()
+	if err == nil && errTx != sql.ErrTxDone {
+		return errTx
+	}
+	return err
 }
 
-func SerializationFailureError(err error) bool {
+func (r *Repository) SerializationFailureError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -109,12 +112,4 @@ func SerializationFailureError(err error) bool {
 		return true
 	}
 	return false
-}
-
-func Rollback(tx *sql.Tx, err error) error {
-	errTx := tx.Rollback()
-	if err == nil && errTx != sql.ErrTxDone {
-		return errTx
-	}
-	return err
 }

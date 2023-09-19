@@ -248,6 +248,14 @@ class User {
     id() {
         return this._id;
     }
+
+    phone() {
+        return this.#phone;
+    }
+        
+    fullName() {
+        return this.#fullName;
+    }
 }
 
 class ChatList {
@@ -373,7 +381,7 @@ class Chat {
         this._type = data.Type || 0;
         this.#name = data.Name || '';
         this.#contacts = data.Contacts || [];
-
+        
         this.#presentation = data.Presentation || '';
         this.#phone = data.Phone || '';
         this.#status = data.Status || 0;
@@ -391,6 +399,8 @@ class Chat {
             if (!chat) {
                 return;
             }
+            chat.Presentation = chat.Presentation || data.presentation();
+            chat.Phone = chat.Phone || data.phone();
             return new Chat(chat);
         });     
         return chat;
@@ -432,7 +442,7 @@ class Chat {
         return this.#lastMessageText;
     }
 
-    sendMessage(ws, text, type) {
+    async sendMessage(ws, text, type) {
         const message = new Message({ ChatID: this.id(), Text: text, Type: type});
         ws.send(JSON.stringify(message.toJSON()));
     }

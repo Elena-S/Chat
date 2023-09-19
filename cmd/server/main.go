@@ -1,54 +1,53 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
+	"context"
 	_ "net/http/pprof"
 
 	_ "github.com/Elena-S/Chat/db/migrations-go"
+	"github.com/Elena-S/Chat/pkg/auth"
 	"github.com/Elena-S/Chat/pkg/broker"
+	"github.com/Elena-S/Chat/pkg/chats"
+	"github.com/Elena-S/Chat/pkg/chats/messages"
+	"github.com/Elena-S/Chat/pkg/conns"
 	"github.com/Elena-S/Chat/pkg/database"
 	"github.com/Elena-S/Chat/pkg/handlers"
+	"github.com/Elena-S/Chat/pkg/httpsrv"
 	"github.com/Elena-S/Chat/pkg/kafka"
 	"github.com/Elena-S/Chat/pkg/logger"
 	"github.com/Elena-S/Chat/pkg/redis"
-	"github.com/Elena-S/Chat/pkg/srcmng"
-	"github.com/Elena-S/Chat/pkg/vault"
+	"github.com/Elena-S/Chat/pkg/secretsmng"
+	"github.com/Elena-S/Chat/pkg/users"
+	"go.uber.org/fx"
+	"go.uber.org/fx/fxevent"
+	"go.uber.org/zap"
 )
 
 func main() {
-	var err error
-
-	defer func() {
-		ctxLogger := logger.ChatLogger.WithEventField("Stop of the server")
-		if err != nil {
-			ctxLogger.Error(err.Error())
-		} else if data := recover(); data != nil {
-			ctxLogger.Error(fmt.Sprintf("main: panic raised, %v", data))
-		} else {
-			ctxLogger.Info("")
-		}
-		ctxLogger.Sync()
-	}()
-
-	ctxLogger := logger.ChatLogger.WithEventField("Start of the server")
-	ctxLogger.Info("")
-
-	initComponenets()
-	defer srcmng.SourceKeeper.CloseAll()
-
-	handlers.SetupRouts()
-
-	//needs config file
-	err = http.ListenAndServeTLS(":8000", "../../cert/certificate.crt", "../../cert/privateKey.key", nil)
+	NewApp().Run()
 }
 
-func initComponenets() {
-	broker.MustAssign(kafka.Client)
-
-	srcmng.SourceKeeper.Add(database.DBI)
-	srcmng.SourceKeeper.Add(kafka.Client)
-	srcmng.SourceKeeper.Add(redis.Client)
-	srcmng.SourceKeeper.Add(vault.SecretStorage)
-	srcmng.SourceKeeper.MustLaunchAll()
+func NewApp() *fx.App {
+	return fx.New(
+		auth.Module,
+		secretsmng.Module,
+		database.Module,
+		kafka.Module,
+		redis.Module,
+		broker.Module,
+		handlers.Module,
+		httpsrv.Module,
+		fx.Provide(
+			logger.NewZapLogger,
+			logger.New,
+			context.Background,
+			conns.NewManager,
+			users.NewManager,
+			chats.NewManager,
+			messages.NewManager,
+		),
+		fx.WithLogger(func(logger *zap.Logger) fxevent.Logger {
+			return &fxevent.ZapLogger{Logger: logger}
+		}),
+	)
 }

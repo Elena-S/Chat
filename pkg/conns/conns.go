@@ -1,31 +1,48 @@
 package conns
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
 	"sync"
 
-	"github.com/Elena-S/Chat/pkg/broker"
 	"github.com/Elena-S/Chat/pkg/users"
+	"go.uber.org/fx"
 	"golang.org/x/net/websocket"
 )
 
-var Pool *manager = &manager{pool: new(sync.Map)}
+var (
+	ErrConnNotRegister    = errors.New("conns: a websocket connection did not register")
+	ErrInvalidPayloadType = errors.New("conns: invalid payload type")
+	ErrInvalidPoolType    = errors.New("conns: invalid pool type")
+	ErrContactOffline     = errors.New("conns: the contact is offline")
+)
 
-type manager struct {
+var Module = fx.Module("conns",
+	fx.Provide(
+		NewManager,
+	),
+)
+
+type Manager struct {
 	pool       *sync.Map
 	currentNum uint
 	mu         sync.Mutex
 }
 
-type payload struct {
-	num    uint
-	values map[any]any
+type ManagerParams struct {
+	fx.In
 }
 
-func (m *manager) Store(userID uint, ws *websocket.Conn) (uint, error) {
+func NewManager(p ManagerParams) *Manager {
+	return &Manager{pool: new(sync.Map)}
+}
+
+type payload struct {
+	num uint
+}
+
+func (m *Manager) Store(userID users.UserID, ws *websocket.Conn) (uint, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -34,14 +51,8 @@ func (m *manager) Store(userID uint, ws *websocket.Conn) (uint, error) {
 		return 0, err
 	}
 
-	values := map[any]any{}
-	err = broker.Subscribe(context.TODO(), users.IDToString(userID), ws, values)
-	if err != nil {
-		return 0, err
-	}
-
 	m.currentNum++
-	conn := payload{num: m.currentNum, values: values}
+	conn := payload{num: m.currentNum}
 
 	cs.Store(ws, conn)
 	m.pool.Store(userID, cs)
@@ -49,20 +60,20 @@ func (m *manager) Store(userID uint, ws *websocket.Conn) (uint, error) {
 	return conn.num, nil
 }
 
-func (m *manager) Get(userID uint) (cs *sync.Map, err error) {
+func (m *Manager) Get(userID users.UserID) (cs *sync.Map, err error) {
 	cs, ok, err := m.retrieveConns(userID)
 	if err != nil {
 		return
 	}
 	if !ok {
-		return cs, errors.New("conns: the contact is offline")
+		return cs, ErrContactOffline
 	}
 	return cs, nil
 }
 
-func (m *manager) CloseAndDelete(userID uint, ws *websocket.Conn) (err error) {
+func (m *Manager) CloseAndDelete(userID users.UserID, ws *websocket.Conn) (err error) {
 	err = ws.Close()
-	if err != nil && !errors.Is(err, net.ErrClosed) {
+	if !errors.Is(err, net.ErrClosed) {
 		return
 	}
 	if userID == 0 {
@@ -77,12 +88,12 @@ func (m *manager) CloseAndDelete(userID uint, ws *websocket.Conn) (err error) {
 	}
 	data, ok := cs.LoadAndDelete(ws)
 	if !ok {
-		err = errors.New("conns: a websocket connection did not register")
+		err = ErrConnNotRegister
 		return
 	}
 	conn, ok := data.(payload)
 	if !ok {
-		err = fmt.Errorf("conns: payload data does not match type %T, got type %T", conn, data)
+		err = fmt.Errorf("%w: payload data does not match type %T, got type %T", ErrInvalidPayloadType, conn, data)
 		return
 	}
 	empty := true
@@ -95,14 +106,14 @@ func (m *manager) CloseAndDelete(userID uint, ws *websocket.Conn) (err error) {
 		return
 	}
 	m.pool.Delete(userID)
-	return broker.Unsubscribe(context.TODO(), users.IDToString(userID), conn.values)
+	return nil
 }
 
-func (m *manager) retrieveConns(userID uint) (cs *sync.Map, ok bool, err error) {
+func (m *Manager) retrieveConns(userID users.UserID) (cs *sync.Map, ok bool, err error) {
 	value, ok := m.pool.Load(userID)
 	if ok {
 		if cs, ok = value.(*sync.Map); !ok {
-			return cs, ok, fmt.Errorf("conns: loaded data does not match type %T, got type %T", cs, value)
+			return cs, ok, fmt.Errorf("%w: loaded data does not match type %T, got type %T", ErrInvalidPoolType, cs, value)
 		}
 	} else {
 		cs = new(sync.Map)
@@ -110,7 +121,7 @@ func (m *manager) retrieveConns(userID uint) (cs *sync.Map, ok bool, err error) 
 	return cs, ok, nil
 }
 
-func (m *manager) UserStatus(userID uint) int8 {
+func (m *Manager) UserStatus(userID users.UserID) int8 {
 	_, err := m.Get(userID)
 	if err != nil {
 		return 0

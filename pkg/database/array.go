@@ -40,7 +40,7 @@ func (a *UintArray) Scan(src interface{}) error {
 		return nil
 	}
 
-	return fmt.Errorf("database: cannot convert %T to BoolArray", src)
+	return fmt.Errorf("database: cannot convert %T to UintArray", src)
 }
 
 func (a *UintArray) scanBytes(src []byte) error {

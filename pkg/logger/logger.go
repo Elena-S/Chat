@@ -3,45 +3,44 @@ package logger
 import (
 	"fmt"
 
+	"go.uber.org/fx"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-type Logger interface {
-	With(key string, value any) Logger
-	Info(msg string)
-	Error(msg string)
-	Panic(data any)
-	Fatal(msg string)
-	Sync() error
-}
-
-type logger struct {
-	logger *zap.Logger
-}
-
-var ChatLogger *logger = new(logger)
-
-func init() {
+func NewZapLogger() *zap.Logger {
 	config := zap.NewProductionEncoderConfig()
 	config.EncodeTime = zapcore.ISO8601TimeEncoder
 	fileEncoder := zapcore.NewJSONEncoder(config)
 	writer := zapcore.AddSync(&lumberjack.Logger{
-		//needs config file
+		//TODO: need config file
 		Filename:   "../../logs/server.log",
 		MaxSize:    100,
 		MaxBackups: 1,
 		MaxAge:     1,
+		Compress:   true,
 	})
-	core := zapcore.NewTee(
-		zapcore.NewCore(fileEncoder, writer, zapcore.InfoLevel),
-	)
-
-	ChatLogger.logger = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
+	core := zapcore.NewTee(zapcore.NewCore(fileEncoder, writer, zapcore.InfoLevel))
+	return zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
 }
 
-func (l *logger) With(key string, data any) Logger {
+type Logger struct {
+	logger *zap.Logger
+}
+
+type Params struct {
+	fx.In
+	ZapLogger *zap.Logger
+}
+
+func New(p Params) *Logger {
+	return &Logger{
+		logger: p.ZapLogger,
+	}
+}
+
+func (l *Logger) With(key string, data any) *Logger {
 	var field zapcore.Field
 
 	switch value := data.(type) {
@@ -70,29 +69,44 @@ func (l *logger) With(key string, data any) Logger {
 	default:
 		field = zap.String(key, fmt.Sprint(value))
 	}
-	return &logger{logger: l.logger.With(field)}
+	return &Logger{logger: l.logger.With(field)}
 }
 
-func (l *logger) WithEventField(event string) Logger {
+func (l *Logger) WithEventField(event string) *Logger {
 	return l.With("event", event)
 }
 
-func (l *logger) Info(msg string) {
+func (l *Logger) Info(msg string) {
 	l.logger.Info(msg)
 }
 
-func (l *logger) Error(msg string) {
+func (l *Logger) Error(msg string) {
 	l.logger.Error(msg)
 }
 
-func (l *logger) Panic(data any) {
+func (l *Logger) Warn(msg string) {
+	l.logger.Warn(msg)
+}
+
+func (l *Logger) Panic(data any) {
 	l.logger.Panic(fmt.Sprint(data))
 }
 
-func (l *logger) Fatal(msg string) {
+func (l *Logger) Fatal(msg string) {
 	l.logger.Fatal(msg)
 }
 
-func (l *logger) Sync() error {
+func (l *Logger) Sync() error {
 	return l.logger.Sync()
+}
+
+func (l *Logger) OnDefer(pkg string, err error, panicData any, info string) {
+	if err != nil {
+		l.Error(err.Error())
+	}
+	if panicData != nil {
+		l.Error(fmt.Sprintf("%s: raised panic, %v", pkg, panicData))
+	}
+	l.Info(info)
+	l.Sync()
 }

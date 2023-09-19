@@ -4,82 +4,76 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Elena-S/Chat/pkg/broker"
-	"github.com/Elena-S/Chat/pkg/chats"
 	"github.com/Elena-S/Chat/pkg/logger"
-	"github.com/Elena-S/Chat/pkg/srcmng"
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
-	"golang.org/x/net/websocket"
+	"github.com/google/uuid"
+	"go.uber.org/fx"
 )
 
 const keyConsumer = "kafkaConsumer"
 
-var clientName = "chat_0001" //TODO: should be different for every single instance
+var _ broker.PubSub = (*kafkaClient)(nil)
 
-var _ PubSubSrcManager = (*kafkaClient)(nil)
-var Client *kafkaClient = &kafkaClient{
-	producer: &producer{},
-}
-
-type PubSubSrcManager interface {
-	broker.PubSub
-	srcmng.SourceManager
-}
+var Module = fx.Module("kafka",
+	fx.Provide(
+		func() (*kafkaClient, broker.PubSub, error) {
+			kc, err := NewClient()
+			return kc, kc, err
+		},
+		// fx.Annotate(NewClient, fx.As(new(broker.PubSub))),
+	),
+	fx.Invoke(registerFunc),
+)
 
 type kafkaClient struct {
-	producer           *producer
+	clientID           string
+	producer           *kafka.Producer
 	minStorageDuration string
+	readingTimeout     time.Duration
 	cunsumersNum       uint64
 }
 
-type producer struct {
-	instance   *kafka.Producer
-	onceLaunch sync.Once
-}
-
-func (p *producer) MustLaunch() {
-	p.onceLaunch.Do(func() {
-		pr, err := kafka.NewProducer(&kafka.ConfigMap{
-			"bootstrap.servers": "kafka:9092",
-			"client.id":         clientName,
-		})
-		if err != nil {
-			logger.ChatLogger.WithEventField("kafka producer creation").Error(err.Error())
-		}
-		Client.producer.instance = pr
+func NewClient() (*kafkaClient, error) {
+	clientID := uuid.NewString()
+	//TODO: need config
+	pr, err := kafka.NewProducer(&kafka.ConfigMap{
+		"bootstrap.servers": "kafka:9092",
+		"client.id":         clientID,
 	})
-}
-
-func (p *producer) Close() error {
-	if p.instance == nil || p.instance.IsClosed() {
-		return nil
+	if err != nil {
+		return nil, err
 	}
-	p.instance.Close()
-	return nil
+	c := &kafkaClient{
+		clientID: clientID,
+		producer: pr,
+	}
+	return c, nil
 }
 
-func (p *producer) initClient() *kafka.Producer {
-	p.MustLaunch()
-	return p.instance
-}
-
-func (kc *kafkaClient) MustLaunch() {
-	kc.producer.MustLaunch()
+func registerFunc(lc fx.Lifecycle, c *kafkaClient) {
+	lc.Append(fx.Hook{
+		OnStop: func(ctx context.Context) error {
+			return c.Close()
+		},
+	})
 }
 
 func (kc *kafkaClient) SetMinStorageDuration(d time.Duration) {
 	kc.minStorageDuration = strconv.FormatUint(uint64(d/time.Millisecond), 10)
 }
 
+func (kc *kafkaClient) SetReadingTimeout(d time.Duration) {
+	kc.readingTimeout = time.Millisecond * d
+}
+
 func (kc *kafkaClient) Subscribe(ctx context.Context, topic string, payload map[any]any) error {
-	id := fmt.Sprintf("%s_%s", clientName, strconv.FormatUint(atomic.AddUint64(&kc.cunsumersNum, 1), 10))
+	id := fmt.Sprintf("%s-%s", kc.clientID, strconv.FormatUint(atomic.AddUint64(&kc.cunsumersNum, 1), 10))
 	consumer, err := kafka.NewConsumer(&kafka.ConfigMap{
 		"bootstrap.servers":  "kafka:9092",
 		"client.id":          id,
@@ -89,75 +83,50 @@ func (kc *kafkaClient) Subscribe(ctx context.Context, topic string, payload map[
 	if err != nil {
 		return err
 	}
-
 	payload[keyConsumer] = consumer
 
-	err = consumer.SubscribeTopics([]string{topic}, nil)
+	err = consumer.Subscribe(topic, nil)
 	if err != nil {
 		return err
 	}
-
-	kac, err := kafka.NewAdminClientFromConsumer(consumer)
+	kac, err := kafka.NewAdminClientFromProducer(kc.producer)
 	if err != nil {
 		return err
 	}
-	configs := []kafka.ConfigEntry{{
-		Name:      "retention.ms",
-		Value:     kc.minStorageDuration,
-		Operation: kafka.AlterOperationSet,
-	}}
-	crr, err := kac.AlterConfigs(ctx, []kafka.ConfigResource{{
-		Type:   kafka.ResourceTopic,
-		Name:   topic,
-		Config: configs,
-	}})
+	res, err := kac.CreateTopics(ctx, []kafka.TopicSpecification{{
+		Topic:         topic,
+		NumPartitions: 1,
+		Config:        map[string]string{"retention.ms": kc.minStorageDuration}}})
 	if err != nil {
 		return err
 	}
-	errs := make([]error, len(configs))
-	i := 0
-	for _, res := range crr {
-		errKafka := res.Error
-		if errKafka.Code() != kafka.ErrNoError {
-			errs[i] = errKafka
-			i++
-		}
+	errKafka := res[0].Error
+	if errKafka.Code() != kafka.ErrNoError && errKafka.Code() != kafka.ErrTopicAlreadyExists {
+		return errKafka
 	}
-	if len(errs) > 0 {
-		return errors.Join(errs[:i]...)
-	}
-
 	return nil
 }
 
 func (kc *kafkaClient) Unsubscribe(ctx context.Context, topic string, payload map[any]any) (err error) {
 	consumer, err := retrieveValue(keyConsumer, payload, (*kafka.Consumer)(nil))
 	if err != nil {
-		return err
+		return
 	}
-
-	defer func() {
-		errClose := consumer.Close()
-		if err == nil {
-			err = errClose
-		}
-	}()
-
 	if err = consumer.Unsubscribe(); err != nil {
-		return err
+		return
 	}
-
-	kac, err := kafka.NewAdminClientFromConsumer(consumer)
+	if err = consumer.Close(); err != nil {
+		return
+	}
+	kac, err := kafka.NewAdminClientFromProducer(kc.producer)
 	if err != nil {
-		return err
+		return
 	}
-
 	consumerName := consumer.String()
 	groups := []string{consumerName[:strings.IndexRune(consumerName, '#')]}
-	option := kafka.SetAdminRequestTimeout(time.Second * 30)
-	res, err := kac.DeleteConsumerGroups(ctx, groups, option)
+	res, err := kac.DeleteConsumerGroups(ctx, groups)
 	if err != nil {
-		return err
+		return
 	}
 	errKafka := res.ConsumerGroupResults[0].Error
 	if errKafka.Code() != kafka.ErrNoError {
@@ -168,7 +137,7 @@ func (kc *kafkaClient) Unsubscribe(ctx context.Context, topic string, payload ma
 
 func (kc *kafkaClient) Publish(ctx context.Context, topic string, message []byte) error {
 	chEvent := make(chan kafka.Event)
-	err := kc.producer.initClient().Produce(&kafka.Message{
+	err := kc.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{
 			Topic:     &topic,
 			Partition: kafka.PartitionAny,
@@ -179,27 +148,27 @@ func (kc *kafkaClient) Publish(ctx context.Context, topic string, message []byte
 		return err
 	}
 
-	data := <-chEvent
-	if ev, ok := data.(*kafka.Message); ok {
-		if ev.TopicPartition.Error != nil {
-			return ev.TopicPartition.Error
+	select {
+	case data := <-chEvent:
+		if ev, ok := data.(*kafka.Message); ok {
+			if ev.TopicPartition.Error != nil {
+				return ev.TopicPartition.Error
+			}
+		} else {
+			return fmt.Errorf("kafka: gotten event data does not match type %T, got type %T", ev, data)
 		}
-	} else {
-		return fmt.Errorf("kafka: gotten event data does not match type %T, got type %T", ev, data)
+	case <-ctx.Done():
+		return ctx.Err()
 	}
+
 	return nil
 }
 
-func (kc *kafkaClient) ReadMessages(ctx context.Context, topic string, ws *websocket.Conn, payload map[any]any, ctxLogger logger.Logger) {
+func (kc *kafkaClient) ReadMessages(ctx context.Context, topic string, messageHandler func(xmessage []byte) error, payload map[any]any, ctxLogger *logger.Logger) {
 	consumer, err := retrieveValue(keyConsumer, payload, (*kafka.Consumer)(nil))
 	if err != nil {
 		ctxLogger.Panic(err)
 	}
-	chStopReading, err := broker.RetrieveValue(broker.KeyChStopReading, payload, (chan struct{})(nil))
-	if err != nil {
-		ctxLogger.Panic(err)
-	}
-	defer close(chStopReading)
 	for {
 		if err := ctx.Err(); err != nil {
 			if !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
@@ -207,19 +176,17 @@ func (kc *kafkaClient) ReadMessages(ctx context.Context, topic string, ws *webso
 			}
 			break
 		}
-		xmessage, err := consumer.ReadMessage(time.Millisecond * 500)
+		xmessage, err := consumer.ReadMessage(kc.readingTimeout)
 		if errKafka, ok := err.(kafka.Error); ok && errKafka.IsTimeout() {
 			continue
 		} else if err != nil {
 			ctxLogger.Error(err.Error())
 			break
 		}
-		err = chats.SendMessage(xmessage.Value, ws)
+		err = messageHandler(xmessage.Value)
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				break
-			}
 			ctxLogger.Error(err.Error())
+			continue
 			//TODO: add to queue with errors
 		}
 		if _, err = consumer.CommitMessage(xmessage); err != nil {
@@ -229,7 +196,8 @@ func (kc *kafkaClient) ReadMessages(ctx context.Context, topic string, ws *webso
 }
 
 func (kc *kafkaClient) Close() error {
-	return kc.producer.Close()
+	kc.producer.Close()
+	return nil
 }
 
 type valueObjects interface {
